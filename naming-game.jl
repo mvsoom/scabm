@@ -315,55 +315,78 @@ begin
 		end
 	end
 
+	scaledmean(x, logweight) = mean(x .* exp.(logweight))
+	function scaledstd(x, logweight)
+		x̄ = scaledmean(x, logweight)
+		var = scaledmean((x .- x̄).^2, logweight)
+		return √var
+	end
+
+	function stats1(λ, graphtype)
+		wdf = calculate_weights(λ, graphtype)
+
+		@chain wdf begin
+			@combine $AsTable = (
+				λ = λ,
+				gcc_mean = scaledmean(:gcc, :logweight),
+				gcc_std = scaledstd(:gcc, :logweight),
+				success_rate_mean = scaledmean(:success_rate, :logweight),
+				success_rate_std = scaledstd(:success_rate, :logweight)
+			)
+		end
+	end
+
 	lwmean(x, logweight) = mean(x, Weights(softmax(logweight), 1.))
 	lwstd(x, logweight) = std(x, Weights(softmax(logweight), 1.))
 
-	function stats(λ, graphtype)
+	function stats2(λ, graphtype)
 		wdf = calculate_weights(λ, graphtype)
 
-		# MACKAY
-		return @chain wdf begin
+		@chain wdf begin
 			@combine $AsTable = (
 				λ = λ,
 				gcc_mean = lwmean(:gcc, :logweight),
+				gcc_std = lwstd(:gcc, :logweight),
 				success_rate_mean = lwmean(:success_rate, :logweight),
 				success_rate_std = lwstd(:success_rate, :logweight)
 			)
 		end
-
-		####
-
-		# ORDINARY
-		@chain wdf begin
-			@transform(:weighted_gcc = :gcc .* exp.(:logweight), :weighted_success_rate = :success_rate .* exp.(:logweight))
-			@combine $AsTable = (
-				λ = λ,
-				gcc_mean = mean(:weighted_gcc),
-				success_rate_mean = mean(:weighted_success_rate),
-				success_rate_std = std(:weighted_success_rate)
-			)
-		end
 	end
 
-	sdf = vcat(stats.(-300:100.1:300, "ErdosRenyi")...)
-	@df sdf plot(:λ, :gcc_mean; label = "gcc_mean")
-	@df sdf plot!(:λ, :success_rate_mean; yerr = :success_rate_std, label = "success_rate_mean")
+	sdf1 = vcat(stats1.(-300:77.1:300, "ErdosRenyi")...)
+	@df sdf1 plot(:λ, :gcc_mean; yerr = :gcc_std, label = "gcc_mean 1")
+	p1 = @df sdf1 plot!(:λ, :success_rate_mean; yerr = :success_rate_std, label = "success_rate_mean 1")
+
+	sdf2 = vcat(stats2.(-300:77.1:300, "ErdosRenyi")...)
+	@df sdf2 plot(:λ, :gcc_mean; yerr = :gcc_std, label = "gcc_mean 2")
+	p2 = @df sdf2 plot!(:λ, :success_rate_mean; yerr = :success_rate_std, label = "success_rate_mean 2")
+
+	plot(p1, p2)
 end
 
 # ╔═╡ 13354d0c-9d19-4126-9e7d-242c10c62571
-calculate_weights(200., "ErdosRenyi")
+@df calculate_weights(1., "BarabasiAlbert") histogram(exp.(:logweight)) # Well balanced weights
 
 # ╔═╡ 48de5e0d-4da1-4bd3-98a8-f73aa43f25ac
 let
-	function diagram!(λ, graphtype)
+	function diagram1!(λ, graphtype)
 		λᵋ = λ .+ 1e-4 # Don't hit zero exactly because this fails logz()
-		sdf = vcat(stats.(λᵋ, graphtype)...)
+		sdf = vcat(stats1.(λᵋ, graphtype)...)
+		@df sdf scatter!(:gcc_mean, :success_rate_mean; label = graphtype, legend=:bottomleft)#, xerr = :gcc_std, yerr = :success_rate_std)
+		return sdf
+	end
+
+	function diagram2!(λ, graphtype)
+		λᵋ = λ .+ 1e-4 # Don't hit zero exactly because this fails logz()
+		sdf = vcat(stats2.(λᵋ, graphtype)...)
 		@df sdf plot!(:gcc_mean, :success_rate_mean; label = graphtype, legend=:bottomleft, linewidth=1, line_z = λ, markershape = :circle, marker_z = λ, colorbar_title = "λ (Lagrange multiplier)")#, yerr = :success_rate_std)
 		return sdf
 	end
 
-	lim = 300
-	λ = -lim:100.:lim
+	lim = 100
+	λ = -lim:10.:lim
+
+	diagram! = diagram1!
 
 	p = plot(; xlabel = "⟨GCC⟩ (soft constraint)", ylabel="⟨success rate⟩")
 	diagram!(λ, "ErdosRenyi")
@@ -380,6 +403,20 @@ You can get way less noise if we use the formula $\log Z(\lambda) = \sum_i L_i^\
 Errorbars just indicate the spread in the distribution of the *success rate*, which is indeed considerable (it is multimodal in the unconstrained case (i.e., $\lambda = 0$)).
 It doesn't indicate a "problem"?
 They can get much smaller by increasing the number of agents $N$ 
+"""
+
+# ╔═╡ be7a7c92-f1fd-4671-8216-d43baecf2894
+md"""
+- Our reweighting trick (`lwmean()` in `stats2()`) is a just questionable approximation (i.e. we replace $M \approx \sum_{x\sim q(x)} e^{-\lambda x}/Z(\lambda)$ because the expectation of that sum is $M$), but it helps to see samples as actually being reweighted rather than just doing the importance sampling reweighting. The reweighting trick needs further research and has probably much higher variance than the MC integration approach (we can check this). Indeed, the expectation of the ratio is not actually the true value for finite $M$, whereas this is true for the simple MC integration approach.
+  * See if the denominator actually converges to $M$
+  * You can see something smells funny because in the reweighting trick **we don't need $Z(\lambda)$** -- it's too easy! This is why changing the prior in the NS run didn't matter -- it cancels out!
+  * So we are just smoothly reweighting the samples by a softmax function -- this is why the curves look so good -- error from $Z(\lambda)$ cancels out. The curves change ad random with each re-run of the notebook because the new batch of samples do not have a strong correlation between `gcc` and `success_rate` (see the density correlation plots above) -- the reweighting trick does not average out strongly enough to pick up the signal, whereas the MC integration approach does.
+  * Nevertheless, heuristically use it to justify resampling the samples and the idea of an automatically derived ABM program
+- Things to try: replace `gcc` by `1/gcc` and see if correlation is now negative
+- Try for `T = 5, 10, 15, 20`; this reduces std error on `success_rate`
+- NS simulating "any" temperature ...
+  * We can differentiate the $\log Z(\lambda)$ formula to get much better estimates for the value of the constraint `gcc`
+  * For negative temperature (i.e. negative $\lambda$), either do a new run with $\lambda = -1$ or *maybe we can reverse the NS run*?
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
@@ -1912,5 +1949,6 @@ version = "0.9.1+5"
 # ╠═13354d0c-9d19-4126-9e7d-242c10c62571
 # ╠═48de5e0d-4da1-4bd3-98a8-f73aa43f25ac
 # ╠═3de74763-e77e-436a-b7fe-34c400abfacb
+# ╟─be7a7c92-f1fd-4671-8216-d43baecf2894
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
