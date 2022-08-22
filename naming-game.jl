@@ -29,6 +29,8 @@ end
 
 # ╔═╡ 9bca7179-f29f-4de1-96ef-bf8e6437bbd6
 md"""
+`[julia version 1.6.3]`
+
 # Naming game for one concept on different network types
 
 The global clustering coefficient $C$ indicates how many triples are in fact triangles.
