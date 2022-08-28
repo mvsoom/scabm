@@ -25,6 +25,7 @@ begin
 	AbstractMCMC.setprogress!(false)
 	using Interpolations
 	using StatsFuns
+	using GLM
 end
 
 # ╔═╡ 9bca7179-f29f-4de1-96ef-bf8e6437bbd6
@@ -44,18 +45,16 @@ The global clustering coefficient $C$ indicates how many triples are in fact tri
 - **Watts-Strogatz**: small world
   * Connectedness
   * High clustering $C$ "yet" small mean geodesic path length
- 
-**TODO** Put on Binder with QR code on poster. <http://pluto-on-binder.glitch.me/>
 """
 
 # ╔═╡ f49ee3b8-3051-4f1b-8a9c-5669d3aed19f
-Random.seed!(123)
+Random.seed!(45)
 
 # ╔═╡ 9942dd32-e601-4a01-97ef-e3709080fea8
 begin
-	N = 40
-	M = 10_000 #10_000 #10_000
-	T = 10
+	N = 100
+	M = 10_00 #10_000 #10_000
+	T = 10 # 10
 end;
 
 # ╔═╡ 6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
@@ -157,7 +156,6 @@ begin
 			append!(allwords, speaker.lexicon)
 		end
 
-		
 		model.success_rate = successes/nagents(model)
 	end
 end;
@@ -221,6 +219,12 @@ We don't even need to solve for λ, we can just vary it like a temperature and o
 We can show typical sampled networks for each value of λ.
 """
 
+# ╔═╡ 551c628c-b40b-4f63-a6ba-7560b1c3d3cd
+gccdf = @chain groupby(df, :graphtype) begin
+	# Percentiles taken at 2 sigma level in Gaussian approximation
+	@combine $AsTable = (μ = mean(:gcc), σ = std(:gcc), l = percentile(:gcc, 2.5), m = median(:gcc), u = percentile(:gcc, 97.5))
+end
+
 # ╔═╡ 1a72b222-bbfe-420a-adcd-dd7218a847a6
 begin
 	function getpi(graphtype)
@@ -244,21 +248,30 @@ end
 
 # ╔═╡ b5da988d-a1de-44ab-a409-462dbd68b229
 begin
-	function ns(λ, graphtype)
+	function ns(λ, graphtype; nactive = 100)
 		π = getpi(graphtype)
 		
 		logl(X) = -λ*X[1]
 		prior(X) = π(X[1])
 
-		bounds = Bounds.Ellipsoid
+		bounds = Bounds.NoBounds
 		prop = Proposals.Rejection()
 		model = NestedModel(logl, prior)
-		sampler = Nested(1, 100; bounds=bounds, proposal=prop)
+		sampler = Nested(1, nactive; bounds=bounds, proposal=prop)
 
-		chain, state = sample(model, sampler; dlogz=0.01)
+		chain, state = sample(model, sampler; dlogz=0.01, param_names=["gcc"])
 	end
 
 	function logz(λ, graphtype)
+		
+
+		#### TEST APPROXIMATION
+		#μ = only(@subset(gccdf, :graphtype .== graphtype).μ)
+		#σ = only(@subset(gccdf, :graphtype .== graphtype).σ)
+
+		#return logz = -λ*μ + (λ*σ)^2/2
+		####
+
 		chain, state = ns(λ, graphtype)
 		state.logz
 	end
@@ -266,11 +279,73 @@ begin
 	logz(1., "BarabasiAlbert")
 end
 
+# ╔═╡ 84c01d08-27c9-412e-a7f4-aa078a5d80d1
+begin
+	using ForwardDiff: derivative
+
+	function logz_annealed(λ, graphtype)
+		chain, state = ns(1., graphtype; nactive = 1000)
+	
+		iter = length(chain)
+		nactive = size(state.us)[2]
+		gcc = vec(chain["gcc"])
+		logl1 = -gcc # Likelihood for λ = 1
+	
+		"""This uses the simplest integration method; from Sivia (2006) p. 189"""
+		function anneal(λ)
+			logz = -floatmax()
+			logwidth = log(1 - exp(-1/nactive))
+			for i = 1:iter
+				logwt = logwidth + λ * logl1[i]
+				logz = logaddexp(logz, logwt)
+				logwidth -= 1/nactive
+			end
+			logz
+		end
+	
+		return anneal.(λ), derivative.(anneal, λ)
+	end
+
+	function logz_annealed(λ, graphtype, runs)
+		m, n = runs, length(λ)
+		mlz = Matrix{Float64}(undef, m, n)
+		mdlz = Matrix{Float64}(undef, m, n)
+		for i in 1:runs
+			lz, dlz = logz_annealed(λ, graphtype)
+			mlz[i, :] = lz
+			mdlz[i, :] = dlz
+		end
+		return vec(mean(mlz; dims = 1)), vec(mean(mdlz; dims = 1))
+	end
+end
+
+# ╔═╡ 63a19c22-caa1-47c2-894c-b092edd68776
+let
+	chain, state = ns(1., "WattsStrogatz")
+	state.logl
+end
+
+# ╔═╡ f0ce6e3a-2640-477a-aa8a-b6a104710f93
+let
+	function explore!(graphtype)
+		lz, dlz = logz_annealed(λ, graphtype, 10)
+		constrained_gcc = -dlz
+		plot!(λ, constrained_gcc; label = graphtype)
+	end
+
+	limit = 500.
+	λ = -limit:1.:limit
+
+	plot()
+	explore!("ErdosRenyi")
+	explore!("BarabasiAlbert")
+	explore!("WattsStrogatz")
+end
+
 # ╔═╡ c1b5536a-9730-411f-9f3b-4294a1aef3b7
 let
-	chain, state = ns(1., "BarabasiAlbert")
-	#mean(getproperty(chain, Symbol("Parameter 1")), Weights(chain.weights))
-	@df chain cols(Symbol("Parameter 1"))
+	λ = -500:500
+	plot(λ, logz_annealed(λ, "WattsStrogatz"))
 end
 
 # ╔═╡ fb8c5871-a7ab-418e-96a4-745d32242385
@@ -307,12 +382,16 @@ where $\log w(x_i) = -\lambda f(x_i) - \log Z(\lambda)$.
 
 # ╔═╡ ae582e83-bb8d-4144-86ba-ed4f4eff6322
 begin
-	function calculate_weights(λ, graphtype)
-		lz = logz(λ, graphtype)
+	function calculate_weights(λ, lz, graphtype)
 		@chain df begin
 			@subset :graphtype .== graphtype
 			@transform :logweight = -λ*(:gcc) .- lz
 		end
+	end
+	
+	function calculate_weights(λ, graphtype)
+		lz = logz(λ, graphtype)
+		calculate_weights(λ, lz, graphtype)
 	end
 
 	scaledmean(x, logweight) = mean(x .* exp.(logweight))
@@ -322,8 +401,8 @@ begin
 		return √var
 	end
 
-	function stats1(λ, graphtype)
-		wdf = calculate_weights(λ, graphtype)
+	function stats1(λ, lz, graphtype)
+		wdf = calculate_weights(λ, lz, graphtype)
 
 		@chain wdf begin
 			@combine $AsTable = (
@@ -335,12 +414,13 @@ begin
 			)
 		end
 	end
+	stats1(λ, graphtype) = stats1(λ, logz(λ, graphtype), graphtype)
 
 	lwmean(x, logweight) = mean(x, Weights(softmax(logweight), 1.))
 	lwstd(x, logweight) = std(x, Weights(softmax(logweight), 1.))
 
-	function stats2(λ, graphtype)
-		wdf = calculate_weights(λ, graphtype)
+	function stats2(λ, lz, graphtype)
+		wdf = calculate_weights(λ, lz, graphtype)
 
 		@chain wdf begin
 			@combine $AsTable = (
@@ -352,46 +432,45 @@ begin
 			)
 		end
 	end
-
-	sdf1 = vcat(stats1.(-300:77.1:300, "ErdosRenyi")...)
-	@df sdf1 plot(:λ, :gcc_mean; yerr = :gcc_std, label = "gcc_mean 1")
-	p1 = @df sdf1 plot!(:λ, :success_rate_mean; yerr = :success_rate_std, label = "success_rate_mean 1")
-
-	sdf2 = vcat(stats2.(-300:77.1:300, "ErdosRenyi")...)
-	@df sdf2 plot(:λ, :gcc_mean; yerr = :gcc_std, label = "gcc_mean 2")
-	p2 = @df sdf2 plot!(:λ, :success_rate_mean; yerr = :success_rate_std, label = "success_rate_mean 2")
-
-	plot(p1, p2)
-end
-
-# ╔═╡ 13354d0c-9d19-4126-9e7d-242c10c62571
-@df calculate_weights(1., "BarabasiAlbert") histogram(exp.(:logweight)) # Well balanced weights
+	stats2(λ, graphtype) = stats2(λ, logz(λ, graphtype), graphtype)
+end;
 
 # ╔═╡ 48de5e0d-4da1-4bd3-98a8-f73aa43f25ac
 let
-	function diagram1!(λ, graphtype)
-		λᵋ = λ .+ 1e-4 # Don't hit zero exactly because this fails logz()
-		sdf = vcat(stats1.(λᵋ, graphtype)...)
-		@df sdf scatter!(:gcc_mean, :success_rate_mean; label = graphtype, legend=:bottomleft)#, xerr = :gcc_std, yerr = :success_rate_std)
+	function diagram!(λ, graphtype, stats)
+		lz, dlz = logz_annealed(λ, graphtype, 100)
+		constrained_gcc = -dlz
+
+		sel = @subset(gccdf, :graphtype .== graphtype)
+		μ = only(sel.μ)
+		σ = only(sel.σ)
+		keep = @. sel.l < constrained_gcc < sel.u
+		
+		λ = λ[keep]
+		lz = lz[keep]
+		constrained_gcc = constrained_gcc[keep]
+		
+		sdf = vcat(stats.(λ, lz, graphtype)...)
+
+		@df sdf plot!(constrained_gcc, :success_rate_mean; linewidth=3, legend = false, yerr = :success_rate_std)#, line_z = λ, markershape = :circle, marker_z = λ, colorbar_title = "λ (Lagrange multiplier)")#, yerr = :success_rate_std)
+
+		y = minimum(sdf.success_rate_mean) - 1.5std(sdf.success_rate_mean)
+		@df @subset(gccdf, :graphtype .== graphtype) scatter!(:μ, [y]; xerr = 2σ, color=:black)
+
 		return sdf
 	end
 
-	function diagram2!(λ, graphtype)
-		λᵋ = λ .+ 1e-4 # Don't hit zero exactly because this fails logz()
-		sdf = vcat(stats2.(λᵋ, graphtype)...)
-		@df sdf plot!(:gcc_mean, :success_rate_mean; label = graphtype, legend=:bottomleft, linewidth=1, line_z = λ, markershape = :circle, marker_z = λ, colorbar_title = "λ (Lagrange multiplier)")#, yerr = :success_rate_std)
-		return sdf
-	end
-
-	lim = 100
+	lim = 500
 	λ = -lim:10.:lim
 
-	diagram! = diagram1!
+	stats = stats2
 
-	p = plot(; xlabel = "⟨GCC⟩ (soft constraint)", ylabel="⟨success rate⟩")
-	diagram!(λ, "ErdosRenyi")
-	diagram!(λ, "BarabasiAlbert")
-	diagram!(λ, "WattsStrogatz")
+	p = plot(; xlabel = "⟨GCC⟩ (soft constraint)", ylabel="⟨success rate⟩", ylim = ())
+	diagram!(λ, "ErdosRenyi", stats)
+	diagram!(λ, "BarabasiAlbert", stats)
+	diagram!(λ, "WattsStrogatz", stats)
+
+	@df df Plots.density!(twinx(), :gcc, group = :graphtype; fill=true, fillalpha=.2, legend=false, ylim=(0,400))
 
 	p
 end
@@ -407,7 +486,7 @@ They can get much smaller by increasing the number of agents $N$
 
 # ╔═╡ be7a7c92-f1fd-4671-8216-d43baecf2894
 md"""
-- Our reweighting trick (`lwmean()` in `stats2()`) is a just questionable approximation (i.e. we replace $M \approx \sum_{x\sim q(x)} e^{-\lambda x}/Z(\lambda)$ because the expectation of that sum is $M$), but it helps to see samples as actually being reweighted rather than just doing the importance sampling reweighting. The reweighting trick needs further research and has probably much higher variance than the MC integration approach (we can check this). Indeed, the expectation of the ratio is not actually the true value for finite $M$, whereas this is true for the simple MC integration approach.
+- Our reweighting trick (`lwmean()` in `stats2()`) is a just questionable approximation (i.e. we replace $M \approx \sum_{x\sim q(x)} e^{-\lambda x}/Z(\lambda)$ because the expectation of each term in that sum is 1), but it helps to see samples as actually being reweighted rather than just doing the importance sampling reweighting. The reweighting trick needs further research and has probably much higher variance than the MC integration approach (we can check this). Indeed, the expectation of the ratio is not actually the true value for finite $M$, whereas this is true for the simple MC integration approach.
   * See if the denominator actually converges to $M$
   * You can see something smells funny because in the reweighting trick **we don't need $Z(\lambda)$** -- it's too easy! This is why changing the prior in the NS run didn't matter -- it cancels out!
   * So we are just smoothly reweighting the samples by a softmax function -- this is why the curves look so good -- error from $Z(\lambda)$ cancels out. The curves change ad random with each re-run of the notebook because the new batch of samples do not have a strong correlation between `gcc` and `success_rate` (see the density correlation plots above) -- the reweighting trick does not average out strongly enough to pick up the signal, whereas the MC integration approach does.
@@ -427,6 +506,8 @@ Agents = "46ada45e-f475-11e8-01d0-f70cc89e6671"
 CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
 DataFramesMeta = "1313f7d8-7da2-5740-9ea0-a2ca25f37964"
 DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
 GraphRecipes = "bd48cda9-67a9-57be-86fa-5b3c104eda73"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
@@ -443,13 +524,15 @@ Agents = "~5.2.0"
 CategoricalArrays = "~0.10.6"
 DataFramesMeta = "~0.11.0"
 DrWatson = "~2.9.1"
+ForwardDiff = "~0.10.30"
+GLM = "~1.7.0"
 GraphRecipes = "~0.5.9"
 Graphs = "~1.7.0"
 Interpolations = "~0.13.6"
 KernelDensity = "~0.6.3"
 NestedSamplers = "~0.8.1"
 StatsBase = "~0.33.16"
-StatsFuns = "~1.0.1"
+StatsFuns = "~0.9.18"
 StatsPlots = "~0.14.34"
 """
 
@@ -559,12 +642,6 @@ git-tree-sha1 = "4b859a208b2397a7a623a03449e4636bdb17bcf2"
 uuid = "83423d85-b0ee-5818-9007-b63ccbeb887a"
 version = "1.16.1+1"
 
-[[Calculus]]
-deps = ["LinearAlgebra"]
-git-tree-sha1 = "f641eb0a4f00c343bbc32346e1217b86f3ce9dad"
-uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
-version = "0.5.1"
-
 [[CategoricalArrays]]
 deps = ["DataAPI", "Future", "Missings", "Printf", "Requires", "Statistics", "Unicode"]
 git-tree-sha1 = "5f5a975d996026a8dd877c35fe26a7b8179c02ba"
@@ -623,6 +700,12 @@ deps = ["ColorTypes", "FixedPointNumbers", "Reexport"]
 git-tree-sha1 = "417b0ed7b8b838aa6ca0a87aadf1bb9eb111ce40"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.8"
+
+[[CommonSubexpressions]]
+deps = ["MacroTools", "Test"]
+git-tree-sha1 = "7b8a93dba8af7e3b42fecabf646260105ac373f7"
+uuid = "bbf7d656-a473-5ed7-a52c-81e309532950"
+version = "0.3.0"
 
 [[Compat]]
 deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", "LibGit2", "Libdl", "LinearAlgebra", "Markdown", "Mmap", "Pkg", "Printf", "REPL", "Random", "SHA", "Serialization", "SharedArrays", "Sockets", "SparseArrays", "Statistics", "Test", "UUIDs", "Unicode"]
@@ -715,6 +798,18 @@ git-tree-sha1 = "80c3e8639e3353e5d2912fb3a1916b8455e2494b"
 uuid = "b429d917-457f-4dbc-8f4c-0cc954292b1d"
 version = "0.4.0"
 
+[[DiffResults]]
+deps = ["StaticArrays"]
+git-tree-sha1 = "c18e98cba888c6c25d1c3b048e4b3380ca956805"
+uuid = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
+version = "1.0.3"
+
+[[DiffRules]]
+deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialFunctions"]
+git-tree-sha1 = "28d605d9a0ac17118fe2c5e9ce0fbb76c3ceb120"
+uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
+version = "1.11.0"
+
 [[Distances]]
 deps = ["LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI"]
 git-tree-sha1 = "3258d0659f812acde79e8a74b11f17ac06d0ca04"
@@ -746,12 +841,6 @@ deps = ["Dates", "FileIO", "JLD2", "LibGit2", "MacroTools", "Pkg", "Random", "Re
 git-tree-sha1 = "67e9001646db6e45006643bf37716ecd831d37d2"
 uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 version = "2.9.1"
-
-[[DualNumbers]]
-deps = ["Calculus", "NaNMath", "SpecialFunctions"]
-git-tree-sha1 = "5837a837389fccf076445fce071c8ddaea35a566"
-uuid = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
-version = "0.6.8"
 
 [[EarCut_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -803,9 +892,9 @@ version = "0.9.18"
 
 [[FillArrays]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "Statistics"]
-git-tree-sha1 = "246621d23d1f43e3b9c368bf3b72b2331a27c286"
+git-tree-sha1 = "deed294cde3de20ae0b2e0355a6c4e1c6a5ceffc"
 uuid = "1a297f60-69ca-5386-bcde-b61e274b549b"
-version = "0.13.2"
+version = "0.12.8"
 
 [[FixedPointNumbers]]
 deps = ["Statistics"]
@@ -824,6 +913,12 @@ deps = ["Printf"]
 git-tree-sha1 = "8339d61043228fdd3eb658d86c926cb282ae72a8"
 uuid = "59287772-0a20-5a39-b81b-1366585eb4c0"
 version = "0.4.2"
+
+[[ForwardDiff]]
+deps = ["CommonSubexpressions", "DiffResults", "DiffRules", "LinearAlgebra", "LogExpFunctions", "NaNMath", "Preferences", "Printf", "Random", "SpecialFunctions", "StaticArrays"]
+git-tree-sha1 = "2f18915445b248731ec5db4e4a17e451020bf21e"
+uuid = "f6369f11-7733-5829-9624-2563aa707210"
+version = "0.10.30"
 
 [[FreeType2_jll]]
 deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
@@ -846,6 +941,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Libglvnd_jll", "Pkg", "Xorg_libXcu
 git-tree-sha1 = "51d2dfe8e590fbd74e7a842cf6d13d8a2f45dc01"
 uuid = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
 version = "3.3.6+0"
+
+[[GLM]]
+deps = ["Distributions", "LinearAlgebra", "Printf", "Reexport", "SparseArrays", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns", "StatsModels"]
+git-tree-sha1 = "92b8d38886445d6d06e5f13201e57d018c4ff880"
+uuid = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
+version = "1.7.0"
 
 [[GR]]
 deps = ["Base64", "DelimitedFiles", "GR_jll", "HTTP", "JSON", "Libdl", "LinearAlgebra", "Pkg", "Printf", "Random", "RelocatableFolders", "Serialization", "Sockets", "Test", "UUIDs"]
@@ -907,22 +1008,16 @@ uuid = "42e2da0e-8278-4e71-bc24-59509adca0fe"
 version = "1.0.2"
 
 [[HTTP]]
-deps = ["Base64", "Dates", "IniFile", "Logging", "MbedTLS", "NetworkOptions", "Sockets", "URIs"]
-git-tree-sha1 = "0fa77022fe4b511826b39c894c90daf5fce3334a"
+deps = ["Base64", "Dates", "IniFile", "MbedTLS", "Sockets"]
+git-tree-sha1 = "c7ec02c4c6a039a98a15f955462cd7aea5df4508"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-version = "0.9.17"
+version = "0.8.19"
 
 [[HarfBuzz_jll]]
 deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "Graphite2_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg"]
 git-tree-sha1 = "129acf094d168394e80ee1dc4bc06ec835e510a3"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "2.8.1+1"
-
-[[HypergeometricFunctions]]
-deps = ["DualNumbers", "LinearAlgebra", "SpecialFunctions", "Test"]
-git-tree-sha1 = "cb7099a0109939f16a4d3b572ba8396b1f6c7c31"
-uuid = "34004b35-14d8-5ef3-9330-4cdb6864b03a"
-version = "0.3.10"
 
 [[Inflate]]
 git-tree-sha1 = "f5fc07d4e706b84f72d54eedcc1c13d92fb0871c"
@@ -1508,6 +1603,11 @@ version = "0.8.2"
 deps = ["Distributed", "Mmap", "Random", "Serialization"]
 uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
 
+[[ShiftedArrays]]
+git-tree-sha1 = "22395afdcf37d6709a5a0766cc4a5ca52cb85ea0"
+uuid = "1277b4bf-5013-50f5-be3d-901d8477a67a"
+version = "1.0.0"
+
 [[Showoff]]
 deps = ["Dates", "Grisu"]
 git-tree-sha1 = "91eddf657aca81df9ae6ceb20b959ae5653ad1de"
@@ -1586,10 +1686,16 @@ uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.33.16"
 
 [[StatsFuns]]
-deps = ["ChainRulesCore", "HypergeometricFunctions", "InverseFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
-git-tree-sha1 = "5783b877201a82fc0014cbf381e7e6eb130473a4"
+deps = ["ChainRulesCore", "InverseFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
+git-tree-sha1 = "5950925ff997ed6fb3e985dcce8eb1ba42a0bbe7"
 uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
-version = "1.0.1"
+version = "0.9.18"
+
+[[StatsModels]]
+deps = ["DataAPI", "DataStructures", "LinearAlgebra", "Printf", "REPL", "ShiftedArrays", "SparseArrays", "StatsBase", "StatsFuns", "Tables"]
+git-tree-sha1 = "4352d5badd1bc8bf0a8c825e886fa1eda4f0f967"
+uuid = "3eaba693-59b7-5ba5-a881-562e759f1c8d"
+version = "0.6.30"
 
 [[StatsPlots]]
 deps = ["AbstractFFTs", "Clustering", "DataStructures", "DataValues", "Distributions", "Interpolations", "KernelDensity", "LinearAlgebra", "MultivariateStats", "Observables", "Plots", "RecipesBase", "RecipesPipeline", "Reexport", "StatsBase", "TableOperations", "Tables", "Widgets"]
@@ -1660,11 +1766,6 @@ deps = ["Adapt", "ArgCheck", "BangBang", "Baselet", "CompositionsBase", "DefineS
 git-tree-sha1 = "c76399a3bbe6f5a88faa33c8f8a65aa631d95013"
 uuid = "28d57a85-8fef-5791-bfe6-a80928e7c999"
 version = "0.4.73"
-
-[[URIs]]
-git-tree-sha1 = "97bbe755a53fe859669cd907f2d96aee8d2c1355"
-uuid = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
-version = "1.3.0"
 
 [[UUIDs]]
 deps = ["Random", "SHA"]
@@ -1925,7 +2026,7 @@ version = "0.9.1+5"
 """
 
 # ╔═╡ Cell order:
-# ╟─9bca7179-f29f-4de1-96ef-bf8e6437bbd6
+# ╠═9bca7179-f29f-4de1-96ef-bf8e6437bbd6
 # ╠═43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
 # ╠═f49ee3b8-3051-4f1b-8a9c-5669d3aed19f
 # ╠═9942dd32-e601-4a01-97ef-e3709080fea8
@@ -1939,16 +2040,19 @@ version = "0.9.1+5"
 # ╠═a0c15e94-669f-464b-b633-b15defbd3861
 # ╠═32c406a9-0299-4a08-9a05-6d48bfe98f99
 # ╠═66bdee01-37a8-4e65-ba44-dacbd5525018
+# ╠═551c628c-b40b-4f63-a6ba-7560b1c3d3cd
 # ╠═1a72b222-bbfe-420a-adcd-dd7218a847a6
 # ╠═b5da988d-a1de-44ab-a409-462dbd68b229
+# ╠═63a19c22-caa1-47c2-894c-b092edd68776
+# ╠═84c01d08-27c9-412e-a7f4-aa078a5d80d1
+# ╠═f0ce6e3a-2640-477a-aa8a-b6a104710f93
 # ╠═c1b5536a-9730-411f-9f3b-4294a1aef3b7
 # ╟─fb8c5871-a7ab-418e-96a4-745d32242385
 # ╠═2b261389-fb04-41a3-87cd-29656f39a9a4
-# ╠═81c409f2-ba3b-4f84-8d01-82b35767a509
+# ╟─81c409f2-ba3b-4f84-8d01-82b35767a509
 # ╠═ae582e83-bb8d-4144-86ba-ed4f4eff6322
-# ╠═13354d0c-9d19-4126-9e7d-242c10c62571
 # ╠═48de5e0d-4da1-4bd3-98a8-f73aa43f25ac
-# ╠═3de74763-e77e-436a-b7fe-34c400abfacb
-# ╟─be7a7c92-f1fd-4671-8216-d43baecf2894
+# ╟─3de74763-e77e-436a-b7fe-34c400abfacb
+# ╠═be7a7c92-f1fd-4671-8216-d43baecf2894
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
