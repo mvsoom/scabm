@@ -8,70 +8,35 @@ using InteractiveUtils
 begin
 	using Agents
 	using Graphs
+	using Distributions
 	using StatsPlots
+	using ColorSchemes
+	using StatsFuns
 	using GraphRecipes
+	using LaTeXStrings
 	using DrWatson: @dict
 	using Random
 	using DataFramesMeta
 	using StatsBase
-	using CategoricalArrays
-	using KernelDensity
+	using PlutoUI
+	TableOfContents()
 end
 
-# ╔═╡ 66bdee01-37a8-4e65-ba44-dacbd5525018
-begin
-	using NestedSamplers
-	using AbstractMCMC
-	AbstractMCMC.setprogress!(false)
-	using Interpolations
-	using StatsFuns
-	using GLM
-end
+# ╔═╡ f8282947-4e2b-40ff-a165-a3fa7e8875eb
+Random.seed!(123)
 
-# ╔═╡ 3725eff1-7fea-4462-a10b-93b96e7420c1
+# ╔═╡ a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 md"""
-The SCABM method has remarkable sensitivity, but still requires a definite
-signal (a definite correlation) to operate on.
-Specifically, if you try to correlate two variables which have no correlation, the method will unfortunately spew out random curves, which vary from SCABM ensemble to SCABM ensemble (and can thus be detected), but which unfortunately will look appealing within a single SCABM ensemble.
-Therefore, it is highly recommended to run and rerun different SCABM ensembles and check whether the obtained $(C, S)$ curves are consistent across ensembles.
-
-Specifically, in our case $(C, S)$, we found it of crucial importance to make the number agents $N$ variable per run, i.e. we sample it as $N' \sim \text{Poisson(N)}$, so $N' = N \pm \sqrt{N}$.
-This is because we calibrate $E \simeq E_\text{ER} = N(N-1)/4$ for each of the network types; i.e., the number of edges $E$ is about the same as the expected number of edges $E_\text{ER}$ of an Erdos-Renyi (ER) network with $N$ nodes.
-Thus, varying $N$ directly varies $E$, which has a strong life-giving effect on $C$ and $S$.
-We found that with constant $N$, the signal $(C, S)$ was not strong enough, and the SCABM method gave essentially random results.
-
-With the Poisson sampling in place, the SCABM method gave consistent results throughout the following variations:
-- Varying $N \sim O(100)$
-- Varying $T \sim O(10)$
-- [Clustering statistic](https://en.wikipedia.org/wiki/Clustering_coefficient) used: average local clustering coefficient [used here] or global clustering coeffient
-- Which importance sampling estimator to use: reweighing samples [used here] or adjusting the statistic by $\exp(-\lambda C_i)/Z(\lambda)$
-- Which estimator of $C$ to use: reweighing samples [used here] or using Automatic Differentiation Nested Sampling $\langle C \rangle = -{d \over d\lambda} \log Z(\lambda)$ (Van Soom & de Boer 2022, in preparation)
-"""
-
-# ╔═╡ 9bca7179-f29f-4de1-96ef-bf8e6437bbd6
-md"""
-`[julia version 1.6.3]`
-
-# Naming game for one concept on different network types
-
-The global clustering coefficient $C$ indicates how many triples are in fact triangles.
-
-## Network types
-
-- **Erdos-Renyi**: random
-- **Barabasi-Albert**: scale-free
-  * Preferential attachment, 80/20, hubs
-  * Short average path length
-- **Watts-Strogatz**: small world
-  * Connectedness
-  * High clustering $C$ "yet" small mean geodesic path length
+Pluto notebooks are reactive, so you can change the ABM parameters below and execute the cell. The changes will propagate throughout the notebook.
 """
 
 # ╔═╡ 9942dd32-e601-4a01-97ef-e3709080fea8
-begin
-	N = 40
-	M = 10000 #10_000 #10_000
-	T = 5 # 10
+begin # ABM parameters
+	N₀ = 30    # Expected number of agents
+	M = 10_000 # Number of samples in one ABM ensemble
+	T = 5      # Number of time steps the ABM is run
+
+	GRAPHTYPES = [:ErdosRenyi, :WattsStrogatz, :BarabasiAlbert]
 end;
 
 # ╔═╡ 6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
@@ -79,82 +44,69 @@ end;
 Sample a `(N, E)` graph with approximately the same number of edges
 `E` as an `erdos_renyi(N, 0.5)` graph, i.e., `E = 0.5*N(N-1)/2`.
 """
-function sample_calibrated_graph(N, graphtype)
+function sample_calibrated_graph(N, graphtype; seed = -1)
 	if graphtype == :ErdosRenyi
-		return erdos_renyi(N, 0.5)
+		g = erdos_renyi(N, 0.5; seed = seed)
 	elseif graphtype == :BarabasiAlbert
 		k = round(Int, .5*(√N + N))
-		#k = 8
-		return barabasi_albert(N, k)
+		g = barabasi_albert(N, k; seed = seed)
 	elseif graphtype == :WattsStrogatz
 		k = round(Int, 0.5*(N-1))
-		β = 0.01 # Free parameter
-		
-		# This function call is equivalent to Mathematica's
-		# WattsStrogatzGraphDistribution[n,p,K] with
-		# n == N, p == β, K == k/2
-		return watts_strogatz(N, k, β) # 
+		β = 0.05 # Free parameter
+		g = watts_strogatz(N, k, β; seed = seed)
 	else
 		error("Unknown graphtype: $graphtype")
 	end
-end
-
-# ╔═╡ d089822c-7f42-4551-abc1-8431e0448ae1
-let
-	function display(graphtype; N = 10)
-		g = sample_calibrated_graph(N, graphtype)
-		@info "Graph type: $graphtype" "Number of edges" = ne(g) "GCC" = global_clustering_coefficient(g)
-		@info mean(eccentricity(g))
-		graphplot(g; title=graphtype, names=map(string, 1:N))
-	end
-
-	display.([:ErdosRenyi, :BarabasiAlbert, :WattsStrogatz])
-end
+	return g
+end;
 
 # ╔═╡ 7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
+# Define the ABM according to Dall’Asta+ (2006) [doi:10.1103/PhysRevE.74.036105]
+# See also this post: 
 begin
 	mutable struct Agent <: AbstractAgent
 	    id::Int
 	    lexicon::Vector{Int}
 	end
 	
-	function initialize(N, graphtype)
-		N = rand(Poisson(N))
-		
-		# Each node is mapped to an Int in 1:N
-		graph = sample_calibrated_graph(N, graphtype)
-		gcc = mean(local_clustering_coefficient(graph))
+	function initialize(N₀, graphtype)
+		# Sample the number of agents for this model
+		N = rand(Poisson(N₀))
+
+		# This maps each node to an Int in 1:N
+		graphseed = abs(rand(Int))
+		graph = sample_calibrated_graph(N, graphtype; seed = graphseed)
+
+		C = mean(local_clustering_coefficient(graph))
 
 		properties = @dict(
+			N,
 			graphtype,
+			graphseed,
 			graph,
-			gcc,
-			success_rate = 0.
+			C,     # Clustering coefficient ∈ [0,1]
+			S = 0. # Succes rate ∈ [0,1]
 		)
 
+		# This maps each agent to an Int in 1:N
 		model = ABM(Agent, nothing; properties)
 
-		# Just like the graph, each agent is mapped to an Int in 1:N
-		for i in 1:N
-			# Initialize lexicon with a random word (number)
-	    	add_agent!(model, [rand(model.rng, Int)])
+		init_lexicon!(agent) = add_agent!(model, [rand(model.rng, Int)])
+		for i in 1:N			
+	    	init_lexicon!(i)
 		end
 
 		return model
 	end
-end;
 
-# ╔═╡ 1cdaf72a-c098-4b98-bd51-429d182b4cfc
-begin
 	function agent_step!(speaker, model)::Int
-		# Rely on the fact that both agents and nodes are mapped
-		# to Ints on 1:N (no agents or nodes are removed)
+		# This relies on the fact that both agents and nodes are
+		# mapped to Ints on 1:N (no agents or nodes are removed)
 		neighbors = all_neighbors(model.graph, speaker.id)
 		isempty(neighbors) && return 0
 		listener = model[rand(model.rng, neighbors)]
 
 		message = rand(model.rng, speaker.lexicon)
-		#@info "$(speaker.id) -> $message -> $(listener.id)"
 
 		if message in listener.lexicon
 			speaker.lexicon = [message]
@@ -168,400 +120,224 @@ begin
 
 	function model_step!(model)
 		successes = 0
-		allwords = Vector{Int}()
-
 		for speaker in allagents(model)
 			successes += agent_step!(speaker, model)
-			append!(allwords, speaker.lexicon)
 		end
-
-		model.success_rate = successes/nagents(model)
+		model.S = successes/nagents(model)
 	end
 end;
 
 # ╔═╡ 9b0abb0f-6081-469e-8c3d-69f506cf1caf
 begin
-	function abm(graphtype)
-		models = [initialize(N, graphtype) for _ in 1:M]
-		adf, mdf, models = ensemblerun!(models, agent_step!, model_step!, T; mdata = [:success_rate])
+	function ensemblerun(N₀, M, T, graphtype)
+		models = [initialize(N₀, graphtype) for _ in 1:M]
 
-		rename!(mdf, :ensemble => :run)
+		adf, mdf, models = ensemblerun!(
+			models,
+			agent_step!,
+			model_step!,
+			T;
+			mdata = [:S]
+		)
+
+		rename!(mdf, :ensemble => :run) # Rename awkwardly named column
 		mdf[!, :graphtype] .= graphtype
 
-		df = @chain mdf begin
+		ensemble = @chain mdf begin
 			@orderby :graphtype :run
 			@subset :step .== maximum(:step)
-			@select :graphtype :run :success_rate
+			@select :graphtype :run :S
 		end
 
-		df[!, :gcc] = [m.gcc for m in models]
+		ensemble[!, :C] = [m.C for m in models]
+		ensemble[!, :N] = [m.N for m in models]
+		ensemble[!, :graphseed] = [m.graphseed for m in models]
 
-		return df
+		return ensemble
 	end
 
-	function getdata()
-		graphtypes = [:ErdosRenyi, :BarabasiAlbert, :WattsStrogatz]
-		
-		df = vcat(abm.(graphtypes)...)
-
-		df.graphtype = categorical(string.(df.graphtype), levels = string.(graphtypes))
-
-		return df
-	end
-
-	df = getdata()
+	ensemble = vcat(ensemblerun.(N₀, M, T, GRAPHTYPES)...)
+	ensemble = groupby(ensemble, :graphtype)
 end
 
-# ╔═╡ cb2cd400-24ba-4b88-abba-1ab2b7e6a518
-@df df Plots.density(:success_rate, group = :graphtype, title = "Success rate", fill=true, fillalpha=.2)
-
-# ╔═╡ e9cbce90-ea00-4630-8657-bd390aad8703
- @df df Plots.density(:gcc, group = :graphtype; title = "GCC", fill=true, fillalpha=.2)
-
-# ╔═╡ a0c15e94-669f-464b-b633-b15defbd3861
-let
-	function correlate(graphtype)
-		let df = filter(:graphtype => ==(graphtype), df)
-			k = kde((df.gcc, df.success_rate))
-			contourf(k, c = :vik; title = "$graphtype p(GCC, success_rate)", xlabel = "GCC", ylabel = "Success rate")
-		end
-	end
-	plot(correlate.(["ErdosRenyi", "BarabasiAlbert", "WattsStrogatz"])...)
-end
-
-# ╔═╡ f753c3b3-4478-4089-a6f4-d4e5cbb9c1b4
-let df = filter(:graphtype => ==("ErdosRenyi"), df)
-	m = lm(@formula(success_rate ~ gcc), df)
-	#scatter(df.gcc, df.success_rate, legend=false, smooth=true)
-end
-
-# ╔═╡ 32c406a9-0299-4a08-9a05-6d48bfe98f99
-md"""
-# Solve the ME problem
-
-We don't even need to solve for λ, we can just vary it like a temperature and observe `<success_rate> = f(λ, <gcc>)` for different values of `N`, just like a PVT curve.
-
-We can show typical sampled networks for each value of λ.
-"""
-
-# ╔═╡ 551c628c-b40b-4f63-a6ba-7560b1c3d3cd
-gccdf = @chain groupby(df, :graphtype) begin
-	# Percentiles taken at 2 sigma level in Gaussian approximation
-	@combine $AsTable = (μ = mean(:gcc), σ = std(:gcc), l = percentile(:gcc, 2.5), m = median(:gcc), u = percentile(:gcc, 97.5))
-end
-
-# ╔═╡ 1a72b222-bbfe-420a-adcd-dd7218a847a6
+# ╔═╡ 9c70b5d1-a6dd-4687-a0d4-6fa2526286ee
 begin
-	function getpi(graphtype)
-		gcc = @chain df begin
-			@subset :graphtype .== graphtype
-			_.gcc
-		end
-		
-		x = sort(gcc)
-		y = ecdf(x)(x)
-
-		extrapolate(interpolate(y, x, LinearMonotonicInterpolation()), Line())
+	function SCABM!(ensemble, λ)
+		@transform!(ensemble, :logweight = +λ*(:C)) # Use `+` convention
 	end
-
-	let
-		π = getpi("BarabasiAlbert")
-		q = 0:0.001:1
-		plot(q, π(q); title = "Empirical quantile function")
-	end
-end
-
-# ╔═╡ b5da988d-a1de-44ab-a409-462dbd68b229
-begin
-	function ns(λ, graphtype; nactive = 100)
-		π = getpi(graphtype)
-		
-		logl(X) = -λ*X[1]
-		prior(X) = π(X[1])
-
-		bounds = Bounds.NoBounds
-		prop = Proposals.Rejection()
-		model = NestedModel(logl, prior)
-		sampler = Nested(1, nactive; bounds=bounds, proposal=prop)
-
-		chain, state = sample(model, sampler; dlogz=0.01, param_names=["gcc"])
-	end
-
-	function logz(λ, graphtype)
-		
-
-		#### TEST APPROXIMATION
-		#μ = only(@subset(gccdf, :graphtype .== graphtype).μ)
-		#σ = only(@subset(gccdf, :graphtype .== graphtype).σ)
-
-		#return logz = -λ*μ + (λ*σ)^2/2
-		####
-
-		chain, state = ns(λ, graphtype)
-		state.logz
-	end
-
-	logz(1., "BarabasiAlbert")
-end
-
-# ╔═╡ 84c01d08-27c9-412e-a7f4-aa078a5d80d1
-begin
-	using ForwardDiff: derivative
-
-	function logz_annealed(λ, graphtype)
-		chain, state = ns(1., graphtype; nactive = 1000)
-	
-		iter = length(chain)
-		nactive = size(state.us)[2]
-		gcc = vec(chain["gcc"])
-		logl1 = -gcc # Likelihood for λ = 1
-	
-		"""This uses the simplest integration method; from Sivia (2006) p. 189"""
-		function anneal(λ)
-			logz = -floatmax()
-			logwidth = log(1 - exp(-1/nactive))
-			for i = 1:iter
-				logwt = logwidth + λ * logl1[i]
-				logz = logaddexp(logz, logwt)
-				logwidth -= 1/nactive
-			end
-			logz
-		end
-	
-		return anneal.(λ), derivative.(anneal, λ)
-	end
-
-	function logz_annealed(λ, graphtype, runs)
-		m, n = runs, length(λ)
-		mlz = Matrix{Float64}(undef, m, n)
-		mdlz = Matrix{Float64}(undef, m, n)
-		for i in 1:runs
-			lz, dlz = logz_annealed(λ, graphtype)
-			mlz[i, :] = lz
-			mdlz[i, :] = dlz
-		end
-		return vec(mean(mlz; dims = 1)), vec(mean(mdlz; dims = 1))
-	end
-end
-
-# ╔═╡ 63a19c22-caa1-47c2-894c-b092edd68776
-let
-	chain, state = ns(1., "WattsStrogatz")
-	state.logl
-end
-
-# ╔═╡ f0ce6e3a-2640-477a-aa8a-b6a104710f93
-let
-	function explore!(graphtype)
-		lz, dlz = logz_annealed(λ, graphtype, 10)
-		constrained_gcc = -dlz
-		plot!(λ, constrained_gcc; label = graphtype)
-	end
-
-	limit = 500.
-	λ = -limit:1.:limit
-
-	plot()
-	explore!("ErdosRenyi")
-	explore!("BarabasiAlbert")
-	explore!("WattsStrogatz")
-end
-
-# ╔═╡ c1b5536a-9730-411f-9f3b-4294a1aef3b7
-let
-	λ = -500:500
-	plot(λ, logz_annealed(λ, "WattsStrogatz"))
-end
-
-# ╔═╡ fb8c5871-a7ab-418e-96a4-745d32242385
-md"""
-The reason why $\log Z(\lambda)$ looks like a straight curve is just because $\pi(f)$ is almost a normal PDF $N(f; \mu,\sigma^2)$ for our hyperparameter settings. Then 
-$\log Z(\lambda) \simeq \log \int df \exp(-\lambda f) N(f; \mu,\sigma^2) = -\lambda \mu + \lambda^2 \sigma^2/2$
-which is nearly linear when $\sigma^2$ is small (as is the case); it acts like a delta function.
-"""
-
-# ╔═╡ 2b261389-fb04-41a3-87cd-29656f39a9a4
-let
-	λ = sort(randn(100))
-	lz = logz.(λ, "ErdosRenyi")
-	scatter(λ, lz)
-end
-
-# ╔═╡ 81c409f2-ba3b-4f84-8d01-82b35767a509
-md"""
-Though not ideal (because success rate is bounded), we use mean and stdev because of the convienent approximation we can make to evaluate posterior moments of $f(x), x \sim p(x|\lambda)$ simply by reweighting samples from $x \sim q(x)$:
-```math
-\langle f(x) \rangle_{x\sim p(x|\lambda)} = \int dx f(x) p(x|\lambda) = \int dx f(x) \frac{q(x) e^{-\lambda f(x)}}{Z(\lambda)} = \int dx q(x) \big[f(x) w(x)\big]
-```
-The last integral can be approximated by Monte Carlo:
-```math
-\langle f(x) \rangle_{x\sim p(x|\lambda)} \approx {1 \over I} \sum_{x_i \sim q(x)} f(x_i) w(x_i)
-```
-where $\log w(x_i) = -\lambda f(x_i) - \log Z(\lambda)$.
-
-!!! note
-
-    Thus, we are not really reweighting samples $x \sim q(x)$, just using a convenient Monte Carlo approximation.
-	It seems like, for example, we can't easily use percentiles to describe the distribution of the sucess rate, but have to rely on moments because of this.
-"""
-
-# ╔═╡ ae582e83-bb8d-4144-86ba-ed4f4eff6322
-begin
-	function calculate_weights(λ, lz, graphtype)
-		@chain df begin
-			@subset :graphtype .== graphtype
-			@transform :logweight = -λ*(:gcc) .- lz
-		end
-	end
-	
-	function calculate_weights(λ, graphtype)
-		lz = logz(λ, graphtype)
-		calculate_weights(λ, lz, graphtype)
-	end
-
-	scaledmean(x, logweight) = mean(x .* exp.(logweight))
-	function scaledstd(x, logweight)
-		x̄ = scaledmean(x, logweight)
-		var = scaledmean((x .- x̄).^2, logweight)
-		return √var
-	end
-
-	function stats1(λ, lz, graphtype)
-		wdf = calculate_weights(λ, lz, graphtype)
-
-		@chain wdf begin
-			@combine $AsTable = (
-				λ = λ,
-				gcc_mean = scaledmean(:gcc, :logweight),
-				gcc_std = scaledstd(:gcc, :logweight),
-				success_rate_mean = scaledmean(:success_rate, :logweight),
-				success_rate_std = scaledstd(:success_rate, :logweight)
-			)
-		end
-	end
-	stats1(λ, graphtype) = stats1(λ, logz(λ, graphtype), graphtype)
 
 	lwmean(x, logweight) = mean(x, Weights(softmax(logweight), 1.))
 	lwstd(x, logweight) = std(x, Weights(softmax(logweight), 1.))
 
-	function stats2(λ, lz, graphtype)
-		wdf = calculate_weights(λ, lz, graphtype)
-
-		@chain wdf begin
+	function project!(ensemble, λ)
+		SCABM!(ensemble, λ)
+		@chain ensemble begin
 			@combine $AsTable = (
 				λ = λ,
-				gcc_mean = lwmean(:gcc, :logweight),
-				gcc_std = lwstd(:gcc, :logweight),
-				success_rate_mean = lwmean(:success_rate, :logweight),
-				success_rate_std = lwstd(:success_rate, :logweight)
+				μᶜ = lwmean(:C, :logweight),
+				σᶜ = lwstd(:C, :logweight),
+				μˢ = lwmean(:S, :logweight),
+				σˢ = lwstd(:S, :logweight)
 			)
 		end
 	end
-	stats2(λ, graphtype) = stats2(λ, logz(λ, graphtype), graphtype)
-end;
 
-# ╔═╡ 48de5e0d-4da1-4bd3-98a8-f73aa43f25ac
-let
-	function diagram!(λ, graphtype, stats)
-		lz, dlz = logz_annealed(λ, graphtype, 20)
-		constrained_gcc = -dlz
-
-		sel = @subset(gccdf, :graphtype .== graphtype)
-		μ = only(sel.μ)
-		σ = only(sel.σ)
-		keep = @. sel.l < constrained_gcc < sel.u
-		
-		λ = λ[keep]
-		lz = lz[keep]
-		constrained_gcc = constrained_gcc[keep]
-		
-		sdf = vcat(stats.(λ, lz, graphtype)...)
-
-		if true
-			constrained_gcc = @. (constrained_gcc - μ)/σ
-		end
-
-		@df sdf plot!(constrained_gcc, :success_rate_mean; linewidth=3, legend = false)#, yerr = :success_rate_std)#, line_z = λ, markershape = :circle, marker_z = λ, colorbar_title = "λ (Lagrange multiplier)")#, yerr = :success_rate_std)
-
-		y = minimum(sdf.success_rate_mean) - 1.5std(sdf.success_rate_mean)
-		@df @subset(gccdf, :graphtype .== graphtype) scatter!(:μ, [y]; xerr = 2σ, color=:black)
-
-		return sdf
-	end
-
-	lim = 1000
-	λ = -lim:10.:lim
-
-	stats = stats2
-
-	p = plot(; xlabel = "⟨GCC⟩ (soft constraint)", ylabel="⟨success rate⟩", ylim = ())
-	diagram!(λ, "ErdosRenyi", stats)
-	diagram!(λ, "BarabasiAlbert", stats)
-	diagram!(λ, "WattsStrogatz", stats)
-
-	@df df Plots.density!(twinx(), :gcc, group = :graphtype; fill=true, fillalpha=.2, legend=false, ylim=(0,400))
-
-	p
+	project!(ensemble, 0.) # Get unconstrained moments
 end
 
-# ╔═╡ 3de74763-e77e-436a-b7fe-34c400abfacb
-md"""
-You can get way less noise if we use the formula $\log Z(\lambda) = \sum_i L_i^\lambda dX_i$ where $L_i$ and $dX_i$ are calculated from `ns(1., ...)`, i.e., for $\lambda = 1$.
+# ╔═╡ 5e84cf2f-5ff2-48a9-a4ef-b0f4fddf88cb
+begin # Plots
+	DPI = 1200
+	FONT = "Arial"
+	COLORSCHEME = ColorSchemes.Greys
+	
+	gr(dpi = DPI)
+	default(fontfamily = FONT)
+end
 
-Errorbars just indicate the spread in the distribution of the *success rate*, which is indeed considerable (it is multimodal in the unconstrained case (i.e., $\lambda = 0$)).
-It doesn't indicate a "problem"?
-They can get much smaller by increasing the number of agents $N$ 
+# ╔═╡ e4bc40ca-8958-4807-a240-64fcb1fedcb4
+begin
+	function lambdas(σᶜ; c = 10, n = 100)
+		lim = c/σᶜ # In general (λσᶜ) ∼ N(0,1)
+		λ = LinRange(-lim, lim, n)
+	end
+
+	function project_lambdas!(ensemble, λ)
+		s = vcat(project!.(Ref(ensemble), λ)...)
+		s = groupby(s, :graphtype)
+	end
+
+	function getrange!(ensemble, graphtype)
+		r = @chain project!(ensemble, 0.) begin
+			@subset :graphtype .== graphtype
+			@select :μᶜ :σᶜ
+		end
+		only(r.μᶜ), only(r.σᶜ)
+	end
+	
+	function plotstates!(p, ensemble; c = 10, n = 100, z = 3)
+		σᶜ = project!(ensemble, 0.).σᶜ
+		λ = lambdas(minimum(σᶜ); c = c, n = n)
+		s = project_lambdas!(ensemble, λ)
+
+		for (k, sᵍ) in pairs(s)
+			μ, σ = getrange!(ensemble, k.graphtype)
+			keep = @. μ - z*σ < sᵍ.μᶜ < μ + z*σ
+			sᵍ = sᵍ[keep, :]
+			@df sᵍ plot!(p, :μᶜ, :μˢ; linewidth=3, linecolor = :black, ylim = (0,1))
+			annotate!(p, μ, 1., text(k.graphtype, FONT, 6))
+		end
+
+		s
+	end
+end
+
+# ╔═╡ 8eb2581b-e4de-4fc5-b716-13bf4ff3ffcd
+begin
+	diagram = @df DataFrame(ensemble) cornerplot(
+		[:C :S]; label = ["Clustering coefficient C", "Success rate S"], group = :graphtype, compact = true, size=(400,300), labelfontsize=8
+	)
+
+	states = plotstates!(diagram[2], ensemble) # Equation-of-state
+
+	savefig(diagram, "diagram.png")
+
+	diagram
+end
+
+# ╔═╡ dc904ade-69f3-4f24-a57b-d2d9b1d764ca
+md"""
+Advantages:
+- A richer behavior than a straight line, with adaptive error bars (not shown)
+- You can resample from the new scabm and observe the samples
+- multiple constraints can be active at the same time
+- very simple conceptual framework and computationally efficient; scales in linear time
 """
 
-# ╔═╡ be7a7c92-f1fd-4671-8216-d43baecf2894
-md"""
-- Our reweighting trick (`lwmean()` in `stats2()`) is a just questionable approximation (i.e. we replace $M \approx \sum_{x\sim q(x)} e^{-\lambda x}/Z(\lambda)$ because the expectation of each term in that sum is 1), but it helps to see samples as actually being reweighted rather than just doing the importance sampling reweighting. The reweighting trick needs further research and has probably much higher variance than the MC integration approach (we can check this). Indeed, the expectation of the ratio is not actually the true value for finite $M$, whereas this is true for the simple MC integration approach.
-  * See if the denominator actually converges to $M$
-  * You can see something smells funny because in the reweighting trick **we don't need $Z(\lambda)$** -- it's too easy! This is why changing the prior in the NS run didn't matter -- it cancels out!
-  * So we are just smoothly reweighting the samples by a softmax function -- this is why the curves look so good -- error from $Z(\lambda)$ cancels out. The curves change ad random with each re-run of the notebook because the new batch of samples do not have a strong correlation between `gcc` and `success_rate` (see the density correlation plots above) -- the reweighting trick does not average out strongly enough to pick up the signal, whereas the MC integration approach does.
-  * Nevertheless, heuristically use it to justify resampling the samples and the idea of an automatically derived ABM program
-- Things to try: replace `gcc` by `1/gcc` and see if correlation is now negative
-- Try for `T = 5, 10, 15, 20`; this reduces std error on `success_rate`
-- NS simulating "any" temperature ...
-  * We can differentiate the $\log Z(\lambda)$ formula to get much better estimates for the value of the constraint `gcc`
-  * For negative temperature (i.e. negative $\lambda$), either do a new run with $\lambda = -1$ or *maybe we can reverse the NS run*?
-"""
+# ╔═╡ 4f4c249a-eaf4-46a9-a5f3-0887715a119c
+states
+
+# ╔═╡ 23826464-15bd-4b29-8540-32982e07b709
+begin
+	function sample_graph(ensemble, graphtype)
+		e = ensemble[(graphtype,)]
+		i = sample(1:nrow(e), Weights(softmax(e.logweight), 1.))
+		s = e[i,:]
+		g = sample_calibrated_graph(s.N, graphtype; seed = s.graphseed)
+		g, s
+	end
+
+	function mark_diagram!(p, C, S, markershape)
+		scatter!(p, [C], [S], markershape = markershape, markercolor = :black)
+	end
+
+	function visualize!(ensemble, graphtype, λ, diagram = nothing; ms = :star4, title = false)
+		SCABM!(ensemble, λ)
+		g, s = sample_graph(ensemble, graphtype)
+
+		isnothing(diagram) || mark_diagram!(diagram[2], [s.C], [s.S], ms)
+		
+		C, S = round.([s.C, s.S], sigdigits=2)
+		c = local_clustering_coefficient(g)
+		
+		colors = get.(Ref(COLORSCHEME), c)
+		name = "$graphtype(N = $(s.N)): λ = $λ, C = $C, S = $S"
+		p = graphplot(g; title = title ? name : "", nodecolor = colors, nodesize = .2, titlefontsize = 9)
+
+		savefig(p, "$name.png")
+
+		p
+	end
+end
+
+# ╔═╡ 4b7f2306-a4c0-42c7-85c2-ea437bc61e50
+[
+	visualize!(ensemble, :WattsStrogatz, -400, diagram; ms = :star4),
+	visualize!(ensemble, :WattsStrogatz, 0, diagram; ms = :star4),
+	visualize!(ensemble, :WattsStrogatz, +400, diagram; ms = :star4),
+]
+
+# ╔═╡ 08c63f0e-5a64-45e3-97be-c1fa958cc661
+visualize!(ensemble, :ErdosRenyi, 0., diagram; ms = :star5)
+
+# ╔═╡ c62e44d4-8501-45f6-bdb0-e357e4c363fb
+visualize!(ensemble, :BarabasiAlbert, 0., diagram; ms = :star6)
+
+# ╔═╡ dd40ac6e-d08f-4663-b6c5-9809493e9612
+let
+	savefig(diagram, "diagram.png")
+	diagram
+end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
-AbstractMCMC = "80f14c24-f653-4e6a-9b94-39d6b0f70001"
 Agents = "46ada45e-f475-11e8-01d0-f70cc89e6671"
-CategoricalArrays = "324d7699-5711-5eae-9e2f-1d82baa6b597"
+ColorSchemes = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
 DataFramesMeta = "1313f7d8-7da2-5740-9ea0-a2ca25f37964"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
-ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
-GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
 GraphRecipes = "bd48cda9-67a9-57be-86fa-5b3c104eda73"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
-Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
-KernelDensity = "5ab0869b-81aa-558d-bb23-cbf5423bbe9b"
-NestedSamplers = "41ceaf6f-1696-4a54-9b49-2e7a9ec3782e"
+LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
+PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 
 [compat]
-AbstractMCMC = "~3.3.1"
 Agents = "~5.2.0"
-CategoricalArrays = "~0.10.6"
+ColorSchemes = "~3.18.0"
 DataFramesMeta = "~0.11.0"
+Distributions = "~0.25.59"
 DrWatson = "~2.9.1"
-ForwardDiff = "~0.10.30"
-GLM = "~1.7.0"
 GraphRecipes = "~0.5.9"
 Graphs = "~1.7.0"
-Interpolations = "~0.13.6"
-KernelDensity = "~0.6.3"
-NestedSamplers = "~0.8.1"
+LaTeXStrings = "~1.3.0"
+PlutoUI = "~0.7.39"
 StatsBase = "~0.33.16"
-StatsFuns = "~0.9.18"
+StatsFuns = "~1.0.1"
 StatsPlots = "~0.14.34"
 """
 
@@ -575,11 +351,11 @@ git-tree-sha1 = "6f1d9bc1c08f9f4a8fa92e3ea3cb50153a1b40d4"
 uuid = "621f4979-c628-5d54-868e-fcf4e3e8185c"
 version = "1.1.0"
 
-[[AbstractMCMC]]
-deps = ["BangBang", "ConsoleProgressMonitor", "Distributed", "Logging", "LoggingExtras", "ProgressLogging", "Random", "StatsBase", "TerminalLoggers", "Transducers"]
-git-tree-sha1 = "5dfb2514d115b449127f29eb7b3272c5528d396e"
-uuid = "80f14c24-f653-4e6a-9b94-39d6b0f70001"
-version = "3.3.1"
+[[AbstractPlutoDingetjes]]
+deps = ["Pkg"]
+git-tree-sha1 = "8eaf9f1b4921132a4cff3f36a1d9ba923b14a481"
+uuid = "6e696c72-6542-2067-7265-42206c756150"
+version = "1.1.4"
 
 [[AbstractTrees]]
 git-tree-sha1 = "03e0550477d86222521d254b741d470ba17ea0b5"
@@ -597,11 +373,6 @@ deps = ["CSV", "DataFrames", "DataStructures", "Distributed", "Downloads", "Grap
 git-tree-sha1 = "4ffabc883a9021fb57686cee925a0cc501e3c15b"
 uuid = "46ada45e-f475-11e8-01d0-f70cc89e6671"
 version = "5.2.0"
-
-[[ArgCheck]]
-git-tree-sha1 = "a3a402a35a2f7e0b87828ccabbd5ebfbebe356b4"
-uuid = "dce04be8-c92d-5529-be00-80e4d2c0e197"
-version = "2.3.0"
 
 [[ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
@@ -633,25 +404,8 @@ git-tree-sha1 = "66771c8d21c8ff5e3a93379480a2307ac36863f7"
 uuid = "13072b0f-2c55-5437-9ae7-d433b7a33950"
 version = "1.0.1"
 
-[[AxisArrays]]
-deps = ["Dates", "IntervalSets", "IterTools", "RangeArrays"]
-git-tree-sha1 = "cf6875678085aed97f52bfc493baaebeb6d40bcb"
-uuid = "39de3d68-74b9-583c-8d2d-e117c070f3a9"
-version = "0.4.5"
-
-[[BangBang]]
-deps = ["Compat", "ConstructionBase", "Future", "InitialValues", "LinearAlgebra", "Requires", "Setfield", "Tables", "ZygoteRules"]
-git-tree-sha1 = "b15a6bc52594f5e4a3b825858d1089618871bf9d"
-uuid = "198e06fe-97b7-11e9-32a5-e1d131e6ad66"
-version = "0.3.36"
-
 [[Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
-
-[[Baselet]]
-git-tree-sha1 = "aebf55e6d7795e02ca500a689d326ac979aaf89e"
-uuid = "9718e550-a3fa-408a-8086-8db961cd8217"
-version = "0.1.1"
 
 [[Bzip2_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -671,11 +425,11 @@ git-tree-sha1 = "4b859a208b2397a7a623a03449e4636bdb17bcf2"
 uuid = "83423d85-b0ee-5818-9007-b63ccbeb887a"
 version = "1.16.1+1"
 
-[[CategoricalArrays]]
-deps = ["DataAPI", "Future", "Missings", "Printf", "Requires", "Statistics", "Unicode"]
-git-tree-sha1 = "5f5a975d996026a8dd877c35fe26a7b8179c02ba"
-uuid = "324d7699-5711-5eae-9e2f-1d82baa6b597"
-version = "0.10.6"
+[[Calculus]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "f641eb0a4f00c343bbc32346e1217b86f3ce9dad"
+uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
+version = "0.5.1"
 
 [[Chain]]
 git-tree-sha1 = "339237319ef4712e6e5df7758d0bccddf5c237d9"
@@ -730,12 +484,6 @@ git-tree-sha1 = "417b0ed7b8b838aa6ca0a87aadf1bb9eb111ce40"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.8"
 
-[[CommonSubexpressions]]
-deps = ["MacroTools", "Test"]
-git-tree-sha1 = "7b8a93dba8af7e3b42fecabf646260105ac373f7"
-uuid = "bbf7d656-a473-5ed7-a52c-81e309532950"
-version = "0.3.0"
-
 [[Compat]]
 deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", "LibGit2", "Libdl", "LinearAlgebra", "Markdown", "Mmap", "Pkg", "Printf", "REPL", "Random", "SHA", "Serialization", "SharedArrays", "Sockets", "SparseArrays", "Statistics", "Test", "UUIDs", "Unicode"]
 git-tree-sha1 = "b153278a25dd42c65abbf4e62344f9d22e59191b"
@@ -745,23 +493,6 @@ version = "3.43.0"
 [[CompilerSupportLibraries_jll]]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
-
-[[CompositionsBase]]
-git-tree-sha1 = "455419f7e328a1a2493cabc6428d79e951349769"
-uuid = "a33af91c-f02d-484b-be07-31d278c5ca2b"
-version = "0.1.1"
-
-[[ConsoleProgressMonitor]]
-deps = ["Logging", "ProgressMeter"]
-git-tree-sha1 = "3ab7b2136722890b9af903859afcf457fa3059e8"
-uuid = "88cd18e8-d9cc-4ea6-8889-5259c0d15c8b"
-version = "0.1.2"
-
-[[ConstructionBase]]
-deps = ["LinearAlgebra"]
-git-tree-sha1 = "f74e9d5388b8620b4cee35d4c5a618dd4dc547f4"
-uuid = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
-version = "1.3.0"
 
 [[Contour]]
 deps = ["StaticArrays"]
@@ -812,11 +543,6 @@ version = "0.4.13"
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
 
-[[DefineSingletons]]
-git-tree-sha1 = "0fba8b706d0178b4dc7fd44a96a92382c9065c2c"
-uuid = "244e2a9f-e319-4986-a169-4d1fe445cd52"
-version = "0.1.2"
-
 [[DelimitedFiles]]
 deps = ["Mmap"]
 uuid = "8bb1440f-4735-579b-a4ab-409b98df4dab"
@@ -826,18 +552,6 @@ deps = ["InverseFunctions", "Test"]
 git-tree-sha1 = "80c3e8639e3353e5d2912fb3a1916b8455e2494b"
 uuid = "b429d917-457f-4dbc-8f4c-0cc954292b1d"
 version = "0.4.0"
-
-[[DiffResults]]
-deps = ["StaticArrays"]
-git-tree-sha1 = "c18e98cba888c6c25d1c3b048e4b3380ca956805"
-uuid = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
-version = "1.0.3"
-
-[[DiffRules]]
-deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialFunctions"]
-git-tree-sha1 = "28d605d9a0ac17118fe2c5e9ce0fbb76c3ceb120"
-uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
-version = "1.11.0"
 
 [[Distances]]
 deps = ["LinearAlgebra", "SparseArrays", "Statistics", "StatsAPI"]
@@ -870,6 +584,12 @@ deps = ["Dates", "FileIO", "JLD2", "LibGit2", "MacroTools", "Pkg", "Random", "Re
 git-tree-sha1 = "67e9001646db6e45006643bf37716ecd831d37d2"
 uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 version = "2.9.1"
+
+[[DualNumbers]]
+deps = ["Calculus", "NaNMath", "SpecialFunctions"]
+git-tree-sha1 = "5837a837389fccf076445fce071c8ddaea35a566"
+uuid = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
+version = "0.6.8"
 
 [[EarCut_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -921,9 +641,9 @@ version = "0.9.18"
 
 [[FillArrays]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "Statistics"]
-git-tree-sha1 = "deed294cde3de20ae0b2e0355a6c4e1c6a5ceffc"
+git-tree-sha1 = "246621d23d1f43e3b9c368bf3b72b2331a27c286"
 uuid = "1a297f60-69ca-5386-bcde-b61e274b549b"
-version = "0.12.8"
+version = "0.13.2"
 
 [[FixedPointNumbers]]
 deps = ["Statistics"]
@@ -942,12 +662,6 @@ deps = ["Printf"]
 git-tree-sha1 = "8339d61043228fdd3eb658d86c926cb282ae72a8"
 uuid = "59287772-0a20-5a39-b81b-1366585eb4c0"
 version = "0.4.2"
-
-[[ForwardDiff]]
-deps = ["CommonSubexpressions", "DiffResults", "DiffRules", "LinearAlgebra", "LogExpFunctions", "NaNMath", "Preferences", "Printf", "Random", "SpecialFunctions", "StaticArrays"]
-git-tree-sha1 = "2f18915445b248731ec5db4e4a17e451020bf21e"
-uuid = "f6369f11-7733-5829-9624-2563aa707210"
-version = "0.10.30"
 
 [[FreeType2_jll]]
 deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
@@ -970,12 +684,6 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Libglvnd_jll", "Pkg", "Xorg_libXcu
 git-tree-sha1 = "51d2dfe8e590fbd74e7a842cf6d13d8a2f45dc01"
 uuid = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
 version = "3.3.6+0"
-
-[[GLM]]
-deps = ["Distributions", "LinearAlgebra", "Printf", "Reexport", "SparseArrays", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns", "StatsModels"]
-git-tree-sha1 = "92b8d38886445d6d06e5f13201e57d018c4ff880"
-uuid = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
-version = "1.7.0"
 
 [[GR]]
 deps = ["Base64", "DelimitedFiles", "GR_jll", "HTTP", "JSON", "Libdl", "LinearAlgebra", "Pkg", "Printf", "Random", "RelocatableFolders", "Serialization", "Sockets", "Test", "UUIDs"]
@@ -1037,16 +745,40 @@ uuid = "42e2da0e-8278-4e71-bc24-59509adca0fe"
 version = "1.0.2"
 
 [[HTTP]]
-deps = ["Base64", "Dates", "IniFile", "MbedTLS", "Sockets"]
-git-tree-sha1 = "c7ec02c4c6a039a98a15f955462cd7aea5df4508"
+deps = ["Base64", "Dates", "IniFile", "Logging", "MbedTLS", "NetworkOptions", "Sockets", "URIs"]
+git-tree-sha1 = "0fa77022fe4b511826b39c894c90daf5fce3334a"
 uuid = "cd3eb016-35fb-5094-929b-558a96fad6f3"
-version = "0.8.19"
+version = "0.9.17"
 
 [[HarfBuzz_jll]]
 deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll", "Graphite2_jll", "JLLWrappers", "Libdl", "Libffi_jll", "Pkg"]
 git-tree-sha1 = "129acf094d168394e80ee1dc4bc06ec835e510a3"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "2.8.1+1"
+
+[[HypergeometricFunctions]]
+deps = ["DualNumbers", "LinearAlgebra", "SpecialFunctions", "Test"]
+git-tree-sha1 = "cb7099a0109939f16a4d3b572ba8396b1f6c7c31"
+uuid = "34004b35-14d8-5ef3-9330-4cdb6864b03a"
+version = "0.3.10"
+
+[[Hyperscript]]
+deps = ["Test"]
+git-tree-sha1 = "8d511d5b81240fc8e6802386302675bdf47737b9"
+uuid = "47d2ed2b-36de-50cf-bf87-49c2cf4b8b91"
+version = "0.0.4"
+
+[[HypertextLiteral]]
+deps = ["Tricks"]
+git-tree-sha1 = "c47c5fa4c5308f27ccaac35504858d8914e102f9"
+uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
+version = "0.9.4"
+
+[[IOCapture]]
+deps = ["Logging", "Random"]
+git-tree-sha1 = "f7be53659ab06ddc986428d3a9dcc95f6fa6705a"
+uuid = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
+version = "0.2.2"
 
 [[Inflate]]
 git-tree-sha1 = "f5fc07d4e706b84f72d54eedcc1c13d92fb0871c"
@@ -1057,11 +789,6 @@ version = "0.1.2"
 git-tree-sha1 = "f550e6e32074c939295eb5ea6de31849ac2c9625"
 uuid = "83e8ac13-25f8-5344-8a64-a9f2b223428f"
 version = "0.5.1"
-
-[[InitialValues]]
-git-tree-sha1 = "4da0f88e9a39111c2fa3add390ab15f3a44f3ca3"
-uuid = "22cec73e-a1b8-11e9-2c92-598750a2cf9c"
-version = "0.3.1"
 
 [[InlineStrings]]
 deps = ["Parsers"]
@@ -1084,12 +811,6 @@ deps = ["AxisAlgorithms", "ChainRulesCore", "LinearAlgebra", "OffsetArrays", "Ra
 git-tree-sha1 = "b7bc05649af456efc75d178846f47006c2c4c3c7"
 uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 version = "0.13.6"
-
-[[IntervalSets]]
-deps = ["Dates", "Statistics"]
-git-tree-sha1 = "ad841eddfb05f6d9be0bff1fa48dcae32f134a2d"
-uuid = "8197267c-284f-5f27-9208-e0e47529a953"
-version = "0.6.2"
 
 [[InverseFunctions]]
 deps = ["Test"]
@@ -1179,12 +900,6 @@ version = "0.15.15"
 [[LazyArtifacts]]
 deps = ["Artifacts", "Pkg"]
 uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
-
-[[LeftChildRightSiblingTrees]]
-deps = ["AbstractTrees"]
-git-tree-sha1 = "b864cb409e8e445688bc478ef87c0afe4f6d1f8d"
-uuid = "1d6d02ad-be62-4b6b-8a6d-2f90e265016e"
-version = "0.1.3"
 
 [[LibCURL]]
 deps = ["LibCURL_jll", "MozillaCACerts_jll"]
@@ -1278,35 +993,11 @@ version = "0.3.15"
 [[Logging]]
 uuid = "56ddb016-857b-54e1-b83d-db4d58db5568"
 
-[[LoggingExtras]]
-deps = ["Dates", "Logging"]
-git-tree-sha1 = "e9437ef53c3b29a838f4635e748bb38d29d11384"
-uuid = "e6f89c97-d47a-5376-807f-9c37f3926c36"
-version = "0.4.8"
-
-[[MCMCChains]]
-deps = ["AbstractMCMC", "AxisArrays", "Compat", "Dates", "Distributions", "Formatting", "IteratorInterfaceExtensions", "KernelDensity", "LinearAlgebra", "MCMCDiagnosticTools", "MLJModelInterface", "NaturalSort", "OrderedCollections", "PrettyTables", "Random", "RecipesBase", "Serialization", "Statistics", "StatsBase", "StatsFuns", "TableTraits", "Tables"]
-git-tree-sha1 = "a9e3f4a3460b08dc75870811635b83afbd388ee8"
-uuid = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
-version = "5.3.0"
-
-[[MCMCDiagnosticTools]]
-deps = ["AbstractFFTs", "DataAPI", "Distributions", "LinearAlgebra", "MLJModelInterface", "Random", "SpecialFunctions", "Statistics", "StatsBase", "Tables"]
-git-tree-sha1 = "058d08594e91ba1d98dcc3669f9421a76824aa95"
-uuid = "be115224-59cd-429b-ad48-344e309966f0"
-version = "0.1.3"
-
 [[MKL_jll]]
 deps = ["Artifacts", "IntelOpenMP_jll", "JLLWrappers", "LazyArtifacts", "Libdl", "Pkg"]
 git-tree-sha1 = "e595b205efd49508358f7dc670a940c790204629"
 uuid = "856f044c-d86e-5d09-b602-aeab76dc8ba7"
 version = "2022.0.0+0"
-
-[[MLJModelInterface]]
-deps = ["Random", "ScientificTypesBase", "StatisticalTraits"]
-git-tree-sha1 = "74d7fb54c306af241c5f9d4816b735cb4051e125"
-uuid = "e80e1ace-859a-464e-9ed9-23947d8ae3ea"
-version = "1.4.2"
 
 [[MacroTools]]
 deps = ["Markdown", "Random"]
@@ -1339,12 +1030,6 @@ git-tree-sha1 = "2af69ff3c024d13bde52b34a2a7d6887d4e7b438"
 uuid = "626554b9-1ddb-594c-aa3c-2596fe9399a5"
 version = "0.7.1"
 
-[[MicroCollections]]
-deps = ["BangBang", "InitialValues", "Setfield"]
-git-tree-sha1 = "6bb7786e4f24d44b4e29df03c69add1b63d88f01"
-uuid = "128add7d-3638-4c79-886c-908ea0c25c34"
-version = "0.1.2"
-
 [[Missings]]
 deps = ["DataAPI"]
 git-tree-sha1 = "bf210ce90b6c9eed32d25dbcae1ebc565df2687f"
@@ -1368,22 +1053,11 @@ git-tree-sha1 = "b086b7ea07f8e38cf122f5016af580881ac914fe"
 uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
 version = "0.3.7"
 
-[[NaturalSort]]
-git-tree-sha1 = "eda490d06b9f7c00752ee81cfa451efe55521e21"
-uuid = "c020b1a1-e9b0-503a-9c33-f039bfc54a85"
-version = "1.0.0"
-
 [[NearestNeighbors]]
 deps = ["Distances", "StaticArrays"]
 git-tree-sha1 = "ded92de95031d4a8c61dfb6ba9adb6f1d8016ddd"
 uuid = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
 version = "0.4.10"
-
-[[NestedSamplers]]
-deps = ["AbstractMCMC", "Clustering", "Distributions", "LinearAlgebra", "LogExpFunctions", "MCMCChains", "Parameters", "Printf", "ProgressLogging", "Random", "StatsBase"]
-git-tree-sha1 = "a0dbf991c7df5aafd26baedb8f97c6ce9ab972fd"
-uuid = "41ceaf6f-1696-4a54-9b49-2e7a9ec3782e"
-version = "0.8.1"
 
 [[NetworkLayout]]
 deps = ["GeometryBasics", "LinearAlgebra", "Random", "Requires", "SparseArrays"]
@@ -1395,9 +1069,9 @@ version = "0.4.4"
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 
 [[Observables]]
-git-tree-sha1 = "dfd8d34871bc3ad08cd16026c1828e271d554db9"
+git-tree-sha1 = "fe29afdef3d0c4a8286128d4e45cc50621b1e43d"
 uuid = "510215fc-4207-5dde-b226-833fc4488ee2"
-version = "0.5.1"
+version = "0.4.0"
 
 [[OffsetArrays]]
 deps = ["Adapt"]
@@ -1494,6 +1168,12 @@ git-tree-sha1 = "d457f881ea56bbfa18222642de51e0abf67b9027"
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 version = "1.29.0"
 
+[[PlutoUI]]
+deps = ["AbstractPlutoDingetjes", "Base64", "ColorTypes", "Dates", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "Markdown", "Random", "Reexport", "UUIDs"]
+git-tree-sha1 = "8d1f54886b9037091edf146b517989fc4a09efec"
+uuid = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+version = "0.7.39"
+
 [[PooledArrays]]
 deps = ["DataAPI", "Future"]
 git-tree-sha1 = "a6062fe4063cdafe78f4a0a81cfffb89721b30e7"
@@ -1515,12 +1195,6 @@ version = "1.3.1"
 [[Printf]]
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
-
-[[ProgressLogging]]
-deps = ["Logging", "SHA", "UUIDs"]
-git-tree-sha1 = "80d919dee55b9c50e8d9e2da5eeafff3fe58b539"
-uuid = "33c8b6b6-d38a-422a-b730-caa89a2f386c"
-version = "0.1.4"
 
 [[ProgressMeter]]
 deps = ["Distributed", "Printf"]
@@ -1547,11 +1221,6 @@ uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 [[Random]]
 deps = ["Serialization"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-
-[[RangeArrays]]
-git-tree-sha1 = "b9039e93773ddcfc828f12aadf7115b4b4d225f5"
-uuid = "b3c3ace0-ae52-54e7-9d0b-2c1406fd6b9d"
-version = "0.3.2"
 
 [[Ratios]]
 deps = ["Requires"]
@@ -1602,11 +1271,6 @@ version = "0.3.0+0"
 [[SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 
-[[ScientificTypesBase]]
-git-tree-sha1 = "a8e18eb383b5ecf1b5e6fc237eb39255044fd92b"
-uuid = "30f210dd-8aff-4c5f-94ba-8e64358c1161"
-version = "3.0.0"
-
 [[Scratch]]
 deps = ["Dates"]
 git-tree-sha1 = "0b4b7f1393cff97c33891da2a0bf69c6ed241fda"
@@ -1622,20 +1286,9 @@ version = "1.3.12"
 [[Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
-[[Setfield]]
-deps = ["ConstructionBase", "Future", "MacroTools", "Requires"]
-git-tree-sha1 = "38d88503f695eb0301479bc9b0d4320b378bafe5"
-uuid = "efcf1570-3423-57d1-acb7-fd33fddbac46"
-version = "0.8.2"
-
 [[SharedArrays]]
 deps = ["Distributed", "Mmap", "Random", "Serialization"]
 uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
-
-[[ShiftedArrays]]
-git-tree-sha1 = "22395afdcf37d6709a5a0766cc4a5ca52cb85ea0"
-uuid = "1277b4bf-5013-50f5-be3d-901d8477a67a"
-version = "1.0.0"
 
 [[Showoff]]
 deps = ["Dates", "Grisu"]
@@ -1674,12 +1327,6 @@ git-tree-sha1 = "bc40f042cfcc56230f781d92db71f0e21496dffd"
 uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
 version = "2.1.5"
 
-[[SplittablesBase]]
-deps = ["Setfield", "Test"]
-git-tree-sha1 = "39c9f91521de844bad65049efd4f9223e7ed43f9"
-uuid = "171d559e-b47b-412a-8079-5efa626c420e"
-version = "0.1.14"
-
 [[StaticArrays]]
 deps = ["LinearAlgebra", "Random", "Statistics"]
 git-tree-sha1 = "cd56bf18ed715e8b09f06ef8c6b781e6cdc49911"
@@ -1691,12 +1338,6 @@ deps = ["Graphs", "JLD2", "SparseArrays"]
 git-tree-sha1 = "855371d8fdfaed46dbb32a7c57a42db4441b9247"
 uuid = "4c8beaf5-199b-59a0-a7f2-21d17de635b6"
 version = "0.3.0"
-
-[[StatisticalTraits]]
-deps = ["ScientificTypesBase"]
-git-tree-sha1 = "271a7fea12d319f23d55b785c51f6876aadb9ac0"
-uuid = "64bff920-2084-43da-a3e6-9bb72801c0c9"
-version = "3.0.0"
 
 [[Statistics]]
 deps = ["LinearAlgebra", "SparseArrays"]
@@ -1715,16 +1356,10 @@ uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.33.16"
 
 [[StatsFuns]]
-deps = ["ChainRulesCore", "InverseFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
-git-tree-sha1 = "5950925ff997ed6fb3e985dcce8eb1ba42a0bbe7"
+deps = ["ChainRulesCore", "HypergeometricFunctions", "InverseFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
+git-tree-sha1 = "5783b877201a82fc0014cbf381e7e6eb130473a4"
 uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
-version = "0.9.18"
-
-[[StatsModels]]
-deps = ["DataAPI", "DataStructures", "LinearAlgebra", "Printf", "REPL", "ShiftedArrays", "SparseArrays", "StatsBase", "StatsFuns", "Tables"]
-git-tree-sha1 = "4352d5badd1bc8bf0a8c825e886fa1eda4f0f967"
-uuid = "3eaba693-59b7-5ba5-a881-562e759f1c8d"
-version = "0.6.30"
+version = "1.0.1"
 
 [[StatsPlots]]
 deps = ["AbstractFFTs", "Clustering", "DataStructures", "DataValues", "Distributions", "Interpolations", "KernelDensity", "LinearAlgebra", "MultivariateStats", "Observables", "Plots", "RecipesBase", "RecipesPipeline", "Reexport", "StatsBase", "TableOperations", "Tables", "Widgets"]
@@ -1774,12 +1409,6 @@ git-tree-sha1 = "1feb45f88d133a655e001435632f019a9a1bcdb6"
 uuid = "62fd8b95-f654-4bbd-a8a5-9c27f68ccd50"
 version = "0.1.1"
 
-[[TerminalLoggers]]
-deps = ["LeftChildRightSiblingTrees", "Logging", "Markdown", "Printf", "ProgressLogging", "UUIDs"]
-git-tree-sha1 = "62846a48a6cd70e63aa29944b8c4ef704360d72f"
-uuid = "5d786b92-1e48-4d6f-9151-6b4477ca9bed"
-version = "0.1.5"
-
 [[Test]]
 deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
@@ -1790,11 +1419,15 @@ git-tree-sha1 = "216b95ea110b5972db65aa90f88d8d89dcb8851c"
 uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 version = "0.9.6"
 
-[[Transducers]]
-deps = ["Adapt", "ArgCheck", "BangBang", "Baselet", "CompositionsBase", "DefineSingletons", "Distributed", "InitialValues", "Logging", "Markdown", "MicroCollections", "Requires", "Setfield", "SplittablesBase", "Tables"]
-git-tree-sha1 = "c76399a3bbe6f5a88faa33c8f8a65aa631d95013"
-uuid = "28d57a85-8fef-5791-bfe6-a80928e7c999"
-version = "0.4.73"
+[[Tricks]]
+git-tree-sha1 = "6bac775f2d42a611cdfcd1fb217ee719630c4175"
+uuid = "410a4b4d-49e4-4fbc-ab6d-cb71b17b3775"
+version = "0.1.6"
+
+[[URIs]]
+git-tree-sha1 = "97bbe755a53fe859669cd907f2d96aee8d2c1355"
+uuid = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
+version = "1.3.0"
 
 [[UUIDs]]
 deps = ["Random", "SHA"]
@@ -1997,12 +1630,6 @@ git-tree-sha1 = "e45044cd873ded54b6a5bac0eb5c971392cf1927"
 uuid = "3161d3a3-bdf6-5164-811a-617609db77b4"
 version = "1.5.2+0"
 
-[[ZygoteRules]]
-deps = ["MacroTools"]
-git-tree-sha1 = "8c1a8e4dfacb1fd631745552c8db35d0deb09ea0"
-uuid = "700de1a5-db45-46bc-99cf-38207098b444"
-version = "0.2.2"
-
 [[libass_jll]]
 deps = ["Artifacts", "Bzip2_jll", "FreeType2_jll", "FriBidi_jll", "HarfBuzz_jll", "JLLWrappers", "Libdl", "Pkg", "Zlib_jll"]
 git-tree-sha1 = "5982a94fcba20f02f42ace44b9894ee2b140fe47"
@@ -2055,34 +1682,23 @@ version = "0.9.1+5"
 """
 
 # ╔═╡ Cell order:
-# ╠═3725eff1-7fea-4462-a10b-93b96e7420c1
-# ╠═9bca7179-f29f-4de1-96ef-bf8e6437bbd6
 # ╠═43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
+# ╠═f8282947-4e2b-40ff-a165-a3fa7e8875eb
+# ╟─a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 # ╠═9942dd32-e601-4a01-97ef-e3709080fea8
 # ╠═6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
-# ╠═d089822c-7f42-4551-abc1-8431e0448ae1
 # ╠═7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
-# ╠═1cdaf72a-c098-4b98-bd51-429d182b4cfc
 # ╠═9b0abb0f-6081-469e-8c3d-69f506cf1caf
-# ╠═cb2cd400-24ba-4b88-abba-1ab2b7e6a518
-# ╠═e9cbce90-ea00-4630-8657-bd390aad8703
-# ╠═a0c15e94-669f-464b-b633-b15defbd3861
-# ╠═f753c3b3-4478-4089-a6f4-d4e5cbb9c1b4
-# ╠═32c406a9-0299-4a08-9a05-6d48bfe98f99
-# ╠═66bdee01-37a8-4e65-ba44-dacbd5525018
-# ╠═551c628c-b40b-4f63-a6ba-7560b1c3d3cd
-# ╠═1a72b222-bbfe-420a-adcd-dd7218a847a6
-# ╠═b5da988d-a1de-44ab-a409-462dbd68b229
-# ╠═63a19c22-caa1-47c2-894c-b092edd68776
-# ╠═84c01d08-27c9-412e-a7f4-aa078a5d80d1
-# ╠═f0ce6e3a-2640-477a-aa8a-b6a104710f93
-# ╠═c1b5536a-9730-411f-9f3b-4294a1aef3b7
-# ╟─fb8c5871-a7ab-418e-96a4-745d32242385
-# ╠═2b261389-fb04-41a3-87cd-29656f39a9a4
-# ╟─81c409f2-ba3b-4f84-8d01-82b35767a509
-# ╠═ae582e83-bb8d-4144-86ba-ed4f4eff6322
-# ╠═48de5e0d-4da1-4bd3-98a8-f73aa43f25ac
-# ╟─3de74763-e77e-436a-b7fe-34c400abfacb
-# ╠═be7a7c92-f1fd-4671-8216-d43baecf2894
+# ╠═9c70b5d1-a6dd-4687-a0d4-6fa2526286ee
+# ╠═5e84cf2f-5ff2-48a9-a4ef-b0f4fddf88cb
+# ╠═e4bc40ca-8958-4807-a240-64fcb1fedcb4
+# ╠═8eb2581b-e4de-4fc5-b716-13bf4ff3ffcd
+# ╠═dc904ade-69f3-4f24-a57b-d2d9b1d764ca
+# ╠═4f4c249a-eaf4-46a9-a5f3-0887715a119c
+# ╠═23826464-15bd-4b29-8540-32982e07b709
+# ╠═4b7f2306-a4c0-42c7-85c2-ea437bc61e50
+# ╠═08c63f0e-5a64-45e3-97be-c1fa958cc661
+# ╠═c62e44d4-8501-45f6-bdb0-e357e4c363fb
+# ╠═dd40ac6e-d08f-4663-b6c5-9809493e9612
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
