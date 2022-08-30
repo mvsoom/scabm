@@ -22,6 +22,66 @@ begin
 	TableOfContents()
 end
 
+# ╔═╡ 7cd47b87-fceb-4995-970c-ae23e250fb46
+md"""
+# SCABMs: Softly Constrained Agent-Based Models
+
+Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [(Vrije Universiteit Brussel)](https://ai.vub.ac.be/abacus/)
+
+!!! info "Abstract"
+
+	An agent-based model (ABM) can be thought of as a computer program that
+	implicitly defines a probability distribution $q(x)$ over all of its possible
+	outputs $x$. The density $q(x)$ cannot be evaluated directly, but is
+	represented by a set of samples ${\bf x} = \{x_n\}$, where each $x_n \sim q(x)$
+	is the output of an independent run of the ABM. We are typically after the
+	expectation value $F := \langle f(x) \rangle$ of some interesting statistic
+	$f(x)$, which can be estimated from the samples $\bf x$ in the usual way. To
+	obtain the object of interest $F$, therefore, the ABM is run in what we define
+	as the "forward" direction, schematically represented as $({\bf x} \rightarrow
+	F)$.
+	
+	It is also possible to run the ABM "backwards" $({\bf x'} \leftarrow F')$,
+	where the object of interest is now the set of samples ${\bf x'} = \{x_m'\}$.
+	In the backward direction the expectation $\langle f(x') \rangle := F'$ is
+	*constrained* to take a given value $F' \neq F$ and now we solve for the
+	probability distribution $p(x')$ which satisfies that soft constraint while
+	still as close as possible to the prior $q(x)$. It turns out that the optimal
+	solution to this problem can be approximated by a simple reweighting of the
+	original samples $\bf x$, from which the $\bf x'$ can be obtained by standard
+	resampling such that roughly each $x_m' \sim p(x')$.
+	
+	By the same logic used in the first paragraph, the obtained $\bf x'$ then
+	represents the probability distribution $p(x')$ of a new computer program
+	automatically derived from the original ABM, which we call a softly constrained
+	agent-based model (SCABM). To show that SCABMs are computationally feasible, we
+	investigate the influence of softly constraining the network clustering
+	coefficient on the convergence of a simple language game played on different
+	network types.
+
+## Introduction
+
+In
+
+Network types:
+
+- **Erdos-Renyi**: random
+- **Barabasi-Albert**: scale-free
+  * Preferential attachment, 80/20, hubs
+  * Short average path length
+- **Watts-Strogatz**: small world
+  * Connectedness
+  * High clustering $C$ "yet" small mean geodesic path length
+"""
+
+# ╔═╡ 017327e7-7c7d-40b5-8573-ec780f42384b
+md"""
+## Application: the naming game
+"""
+
+# ╔═╡ 9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
+md"`[julia version 1.6.3]`"
+
 # ╔═╡ f8282947-4e2b-40ff-a165-a3fa7e8875eb
 Random.seed!(123)
 
@@ -308,6 +368,11 @@ let
 	savefig(diagram, "diagram.png")
 	diagram
 end
+
+# ╔═╡ a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
+md"""
+## Theory
+"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1682,6 +1747,9 @@ version = "0.9.1+5"
 """
 
 # ╔═╡ Cell order:
+# ╠═7cd47b87-fceb-4995-970c-ae23e250fb46
+# ╠═017327e7-7c7d-40b5-8573-ec780f42384b
+# ╟─9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
 # ╠═43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
 # ╠═f8282947-4e2b-40ff-a165-a3fa7e8875eb
 # ╟─a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
@@ -1700,5 +1768,6 @@ version = "0.9.1+5"
 # ╠═08c63f0e-5a64-45e3-97be-c1fa958cc661
 # ╠═c62e44d4-8501-45f6-bdb0-e357e4c363fb
 # ╠═dd40ac6e-d08f-4663-b6c5-9809493e9612
+# ╠═a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
