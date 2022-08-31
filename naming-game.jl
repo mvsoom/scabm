@@ -22,11 +22,19 @@ begin
 	TableOfContents()
 end
 
+# ╔═╡ ff785b01-f0f3-4feb-9fc0-f07a5b86faa5
+let
+	using ShortCodes
+	[
+		DOI("10.1103/PhysRevE.74.036105"),
+	]
+end
+
 # ╔═╡ 7cd47b87-fceb-4995-970c-ae23e250fb46
 md"""
 # SCABMs: Softly Constrained Agent-Based Models
 
-Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [(Vrije Universiteit Brussel)](https://ai.vub.ac.be/abacus/)
+Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [[VUB AI lab]](https://ai.vub.ac.be/abacus/)
 
 !!! info "Abstract"
 
@@ -58,10 +66,28 @@ Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [(Vrije Universiteit
 	investigate the influence of softly constraining the network clustering
 	coefficient on the convergence of a simple language game played on different
 	network types.
+"""
 
+# ╔═╡ 8a8a6115-a178-4b97-bc77-371a85288363
+md"""
 ## Introduction
 
 In
+
+!!! terminology "Tip"
+	Some tips for using this notebook:
+	- Click the 📕 book icon to see a table of contents.
+    - Click the 👁️ eye icon to see the source of a cell.
+	- It's handy to have multiple views of this notebook. For example, open this notebook in two side-by-side browser windows so you can scroll back and forth without losing your current position.
+	- When running this notebook for the first time, Julia will take some time to install the relevant libraries and compile the code on the first pass. After this process, things should be (very) fast.
+"""
+
+# ╔═╡ 017327e7-7c7d-40b5-8573-ec780f42384b
+md"""
+## The Naming Game
+
+!!! note
+	The [Medium blog post](https://medium.com/@ramongarciaseuma/dynamics-for-language-conventions-naming-game-8198c8383197)
 
 Network types:
 
@@ -74,11 +100,6 @@ Network types:
   * High clustering $C$ "yet" small mean geodesic path length
 """
 
-# ╔═╡ 017327e7-7c7d-40b5-8573-ec780f42384b
-md"""
-## Application: the naming game
-"""
-
 # ╔═╡ 9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
 md"`[julia version 1.6.3]`"
 
@@ -87,7 +108,8 @@ Random.seed!(123)
 
 # ╔═╡ a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 md"""
-Pluto notebooks are reactive, so you can change the ABM parameters below and execute the cell. The changes will propagate throughout the notebook.
+!!! terminology "Tip"
+	Pluto notebooks are reactive, so you can change the ABM parameters below and execute the cell. The changes will propagate throughout the notebook.
 """
 
 # ╔═╡ 9942dd32-e601-4a01-97ef-e3709080fea8
@@ -121,8 +143,7 @@ function sample_calibrated_graph(N, graphtype; seed = -1)
 end;
 
 # ╔═╡ 7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
-# Define the ABM according to Dall’Asta+ (2006) [doi:10.1103/PhysRevE.74.036105]
-# See also this post: 
+# Define the ABM according to Dall’Asta+ (2006)
 begin
 	mutable struct Agent <: AbstractAgent
 	    id::Int
@@ -305,15 +326,6 @@ begin
 	diagram
 end
 
-# ╔═╡ dc904ade-69f3-4f24-a57b-d2d9b1d764ca
-md"""
-Advantages:
-- A richer behavior than a straight line, with adaptive error bars (not shown)
-- You can resample from the new scabm and observe the samples
-- multiple constraints can be active at the same time
-- very simple conceptual framework and computationally efficient; scales in linear time
-"""
-
 # ╔═╡ 4f4c249a-eaf4-46a9-a5f3-0887715a119c
 states
 
@@ -369,10 +381,59 @@ let
 	diagram
 end
 
-# ╔═╡ a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
+# ╔═╡ fda9c33b-8657-4d8b-b74e-d0a035dd67eb
 md"""
-## Theory
+## Conclusion
+
+Advantages:
+- A richer behavior than a straight line, with adaptive error bars (not shown)
+- You can resample from the new scabm and observe the samples
+- multiple constraints can be active at the same time
+- very simple conceptual framework and computationally efficient; scales in linear time
 """
+
+# ╔═╡ a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
+md"## Appendices"
+
+# ╔═╡ ecf1f329-fffc-41d4-bf95-c6e1154a2dc8
+md"""
+### Theory
+"""
+
+# ╔═╡ 917b1c65-e48f-4e14-aff1-53cef88231a3
+md"""
+### Sensitivity
+
+The SCABM method has remarkable sensitivity, but still requires a definite
+signal (a definite correlation) to operate on.
+Specifically, if you try to correlate two variables which have no correlation, the method will unfortunately spew out random curves, which vary from SCABM ensemble to SCABM ensemble (and can thus be detected), but which unfortunately will look appealing within a single SCABM ensemble.
+Therefore, it is highly recommended to run and rerun different SCABM ensembles and check whether the obtained $(C, S)$ curves are consistent across ensembles.
+
+Specifically, in our case $(C, S)$, we found it of crucial importance to make the number agents $N$ variable per run, i.e. we sample it as $N' \sim \text{Poisson(N)}$, so $N' = N \pm \sqrt{N}$.
+This is because we calibrate $E \simeq E_\text{ER} = N(N-1)/4$ for each of the network types; i.e., the number of edges $E$ is about the same as the expected number of edges $E_\text{ER}$ of an Erdos-Renyi (ER) network with $N$ nodes.
+Thus, varying $N$ directly varies $E$, which has a strong life-giving effect on $C$ and $S$.
+We found that with constant $N$, the signal $(C, S)$ was not strong enough, and the SCABM method gave essentially random results.
+
+With the Poisson sampling in place, the SCABM method gave consistent results throughout the following variations:
+- Varying $N \sim O(100)$
+- Varying $T \sim O(10)$
+- [Clustering statistic](https://en.wikipedia.org/wiki/Clustering_coefficient) used: average local clustering coefficient [used here] or global clustering coeffient
+- Which importance sampling estimator to use: reweighing samples [used here] or adjusting the statistic by $\exp(-\lambda C_i)/Z(\lambda)$
+- Which estimator of $C$ to use: reweighing samples [used here] or using Automatic Differentiation Nested Sampling $\langle C \rangle = -{d \over d\lambda} \log Z(\lambda)$ (Van Soom & de Boer 2022, in preparation)
+"""
+
+# ╔═╡ f6e4d332-c8b8-425e-a1fe-83378552836c
+@df DataFrame(ensemble) cornerplot(
+		[:N :S]; label = ["Number of agents N", "Success rate S"], group = :graphtype, compact = true, size=(400,300), labelfontsize=8
+	)
+
+# ╔═╡ e8c62155-902b-41f6-bc8d-6f8d74ed352a
+@df DataFrame(ensemble) cornerplot(
+		[:C :N]; label = ["Clustering coefficient C", "Number of agents N"], group = :graphtype, compact = true, size=(400,300), labelfontsize=8
+	)
+
+# ╔═╡ dcbfc502-4b53-40e4-b735-9a2aadc96538
+md"### References"
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -387,6 +448,7 @@ Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+ShortCodes = "f62ebe17-55c5-4640-972f-b59c0dd11ccf"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
@@ -401,6 +463,7 @@ GraphRecipes = "~0.5.9"
 Graphs = "~1.7.0"
 LaTeXStrings = "~1.3.0"
 PlutoUI = "~0.7.39"
+ShortCodes = "~0.3.3"
 StatsBase = "~0.33.16"
 StatsFuns = "~1.0.1"
 StatsPlots = "~0.14.34"
@@ -921,6 +984,12 @@ git-tree-sha1 = "3c837543ddb02250ef42f4738347454f95079d4e"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.3"
 
+[[JSON3]]
+deps = ["Dates", "Mmap", "Parsers", "StructTypes", "UUIDs"]
+git-tree-sha1 = "fd6f0cae36f42525567108a42c1c674af2ac620d"
+uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+version = "1.9.5"
+
 [[JpegTurbo_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "b53380851c6e6664204efb2e62cd24fa5c47e4ba"
@@ -1088,6 +1157,12 @@ uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
 git-tree-sha1 = "e498ddeee6f9fdb4551ce855a46f54dbd900245f"
 uuid = "442fdcdd-2543-5da2-b0f3-8c86c306513e"
 version = "0.3.1"
+
+[[Memoize]]
+deps = ["MacroTools"]
+git-tree-sha1 = "2b1dfcba103de714d31c033b5dacc2e4a12c7caa"
+uuid = "c03570c3-d221-55d1-a50c-7939bbd78826"
+version = "0.4.4"
 
 [[MetaGraphs]]
 deps = ["Graphs", "JLD2", "Random"]
@@ -1355,6 +1430,12 @@ uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 deps = ["Distributed", "Mmap", "Random", "Serialization"]
 uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
 
+[[ShortCodes]]
+deps = ["Base64", "CodecZlib", "HTTP", "JSON3", "Memoize", "UUIDs"]
+git-tree-sha1 = "0fcc38215160e0a964e9b0f0c25dcca3b2112ad1"
+uuid = "f62ebe17-55c5-4640-972f-b59c0dd11ccf"
+version = "0.3.3"
+
 [[Showoff]]
 deps = ["Dates", "Grisu"]
 git-tree-sha1 = "91eddf657aca81df9ae6ceb20b959ae5653ad1de"
@@ -1437,6 +1518,12 @@ deps = ["Adapt", "DataAPI", "StaticArrays", "Tables"]
 git-tree-sha1 = "9abba8f8fb8458e9adf07c8a2377a070674a24f1"
 uuid = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
 version = "0.6.8"
+
+[[StructTypes]]
+deps = ["Dates", "UUIDs"]
+git-tree-sha1 = "d24a825a95a6d98c385001212dc9020d609f2d4f"
+uuid = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
+version = "1.8.1"
 
 [[SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
@@ -1747,12 +1834,13 @@ version = "0.9.1+5"
 """
 
 # ╔═╡ Cell order:
-# ╠═7cd47b87-fceb-4995-970c-ae23e250fb46
+# ╟─7cd47b87-fceb-4995-970c-ae23e250fb46
+# ╟─8a8a6115-a178-4b97-bc77-371a85288363
 # ╠═017327e7-7c7d-40b5-8573-ec780f42384b
 # ╟─9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
 # ╠═43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
 # ╠═f8282947-4e2b-40ff-a165-a3fa7e8875eb
-# ╟─a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
+# ╠═a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 # ╠═9942dd32-e601-4a01-97ef-e3709080fea8
 # ╠═6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
 # ╠═7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
@@ -1761,13 +1849,19 @@ version = "0.9.1+5"
 # ╠═5e84cf2f-5ff2-48a9-a4ef-b0f4fddf88cb
 # ╠═e4bc40ca-8958-4807-a240-64fcb1fedcb4
 # ╠═8eb2581b-e4de-4fc5-b716-13bf4ff3ffcd
-# ╠═dc904ade-69f3-4f24-a57b-d2d9b1d764ca
 # ╠═4f4c249a-eaf4-46a9-a5f3-0887715a119c
 # ╠═23826464-15bd-4b29-8540-32982e07b709
 # ╠═4b7f2306-a4c0-42c7-85c2-ea437bc61e50
 # ╠═08c63f0e-5a64-45e3-97be-c1fa958cc661
 # ╠═c62e44d4-8501-45f6-bdb0-e357e4c363fb
 # ╠═dd40ac6e-d08f-4663-b6c5-9809493e9612
-# ╠═a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
+# ╠═fda9c33b-8657-4d8b-b74e-d0a035dd67eb
+# ╟─a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
+# ╠═ecf1f329-fffc-41d4-bf95-c6e1154a2dc8
+# ╠═917b1c65-e48f-4e14-aff1-53cef88231a3
+# ╠═f6e4d332-c8b8-425e-a1fe-83378552836c
+# ╠═e8c62155-902b-41f6-bc8d-6f8d74ed352a
+# ╟─dcbfc502-4b53-40e4-b735-9a2aadc96538
+# ╟─ff785b01-f0f3-4feb-9fc0-f07a5b86faa5
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
