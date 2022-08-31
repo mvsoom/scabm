@@ -28,43 +28,11 @@ begin
 	using GLM
 end
 
-# ╔═╡ 3725eff1-7fea-4462-a10b-93b96e7420c1
-md"""
-The SCABM method has remarkable sensitivity, but still requires a definite
-signal (a definite correlation) to operate on.
-Specifically, if you try to correlate two variables which have no correlation, the method will unfortunately spew out random curves, which vary from SCABM ensemble to SCABM ensemble (and can thus be detected), but which unfortunately will look appealing within a single SCABM ensemble.
-Therefore, it is highly recommended to run and rerun different SCABM ensembles and check whether the obtained $(C, S)$ curves are consistent across ensembles.
-
-Specifically, in our case $(C, S)$, we found it of crucial importance to make the number agents $N$ variable per run, i.e. we sample it as $N' \sim \text{Poisson(N)}$, so $N' = N \pm \sqrt{N}$.
-This is because we calibrate $E \simeq E_\text{ER} = N(N-1)/4$ for each of the network types; i.e., the number of edges $E$ is about the same as the expected number of edges $E_\text{ER}$ of an Erdos-Renyi (ER) network with $N$ nodes.
-Thus, varying $N$ directly varies $E$, which has a strong life-giving effect on $C$ and $S$.
-We found that with constant $N$, the signal $(C, S)$ was not strong enough, and the SCABM method gave essentially random results.
-
-With the Poisson sampling in place, the SCABM method gave consistent results throughout the following variations:
-- Varying $N \sim O(100)$
-- Varying $T \sim O(10)$
-- [Clustering statistic](https://en.wikipedia.org/wiki/Clustering_coefficient) used: average local clustering coefficient [used here] or global clustering coeffient
-- Which importance sampling estimator to use: reweighing samples [used here] or adjusting the statistic by $\exp(-\lambda C_i)/Z(\lambda)$
-- Which estimator of $C$ to use: reweighing samples [used here] or using Automatic Differentiation Nested Sampling $\langle C \rangle = -{d \over d\lambda} \log Z(\lambda)$ (Van Soom & de Boer 2022, in preparation)
-"""
-
 # ╔═╡ 9bca7179-f29f-4de1-96ef-bf8e6437bbd6
 md"""
 `[julia version 1.6.3]`
 
 # Naming game for one concept on different network types
-
-The global clustering coefficient $C$ indicates how many triples are in fact triangles.
-
-## Network types
-
-- **Erdos-Renyi**: random
-- **Barabasi-Albert**: scale-free
-  * Preferential attachment, 80/20, hubs
-  * Short average path length
-- **Watts-Strogatz**: small world
-  * Connectedness
-  * High clustering $C$ "yet" small mean geodesic path length
 """
 
 # ╔═╡ 9942dd32-e601-4a01-97ef-e3709080fea8
@@ -2055,7 +2023,6 @@ version = "0.9.1+5"
 """
 
 # ╔═╡ Cell order:
-# ╠═3725eff1-7fea-4462-a10b-93b96e7420c1
 # ╠═9bca7179-f29f-4de1-96ef-bf8e6437bbd6
 # ╠═43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
 # ╠═9942dd32-e601-4a01-97ef-e3709080fea8

@@ -4,6 +4,12 @@
 using Markdown
 using InteractiveUtils
 
+# ╔═╡ 22c16f23-cb6e-4b15-922b-32c4e4b9baba
+begin
+	using PlutoUI
+	TableOfContents()
+end
+
 # ╔═╡ 43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
 begin
 	using Agents
@@ -18,8 +24,6 @@ begin
 	using Random
 	using DataFramesMeta
 	using StatsBase
-	using PlutoUI
-	TableOfContents()
 end
 
 # ╔═╡ ff785b01-f0f3-4feb-9fc0-f07a5b86faa5
@@ -32,16 +36,16 @@ end
 
 # ╔═╡ 7cd47b87-fceb-4995-970c-ae23e250fb46
 md"""
-# SCABMs: Softly Constrained Agent-Based Models
+# **SCABMs**: Softly Constrained Agent-Based Models
 
 Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [[VUB AI lab]](https://ai.vub.ac.be/abacus/)
 
 !!! info "Abstract"
 
-	An agent-based model (ABM) can be thought of as a computer program that
+	An **agent-based model (ABM)** can be thought of as a computer program that
 	implicitly defines a probability distribution $q(x)$ over all of its possible
 	outputs $x$. The density $q(x)$ cannot be evaluated directly, but is
-	represented by a set of samples ${\bf x} = \{x_n\}$, where each $x_n \sim q(x)$
+	represented by a set of samples ${\bf x} = \{x_m\}$, where each $x_m \sim q(x)$
 	is the output of an independent run of the ABM. We are typically after the
 	expectation value $F := \langle f(x) \rangle$ of some interesting statistic
 	$f(x)$, which can be estimated from the samples $\bf x$ in the usual way. To
@@ -50,19 +54,19 @@ Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [[VUB AI lab]](https
 	F)$.
 	
 	It is also possible to run the ABM "backwards" $({\bf x'} \leftarrow F')$,
-	where the object of interest is now the set of samples ${\bf x'} = \{x_m'\}$.
+	where the object of interest is now the set of samples ${\bf x'} = \{x_\ell'\}$.
 	In the backward direction the expectation $\langle f(x') \rangle := F'$ is
 	*constrained* to take a given value $F' \neq F$ and now we solve for the
 	probability distribution $p(x')$ which satisfies that soft constraint while
 	still as close as possible to the prior $q(x)$. It turns out that the optimal
 	solution to this problem can be approximated by a simple reweighting of the
 	original samples $\bf x$, from which the $\bf x'$ can be obtained by standard
-	resampling such that roughly each $x_m' \sim p(x')$.
+	resampling such that roughly each $x_\ell' \sim p(x')$.
 	
 	By the same logic used in the first paragraph, the obtained $\bf x'$ then
 	represents the probability distribution $p(x')$ of a new computer program
-	automatically derived from the original ABM, which we call a softly constrained
-	agent-based model (SCABM). To show that SCABMs are computationally feasible, we
+	automatically derived from the original ABM, which we call a **softly constrained
+	agent-based model (SCABM)**. To show that SCABMs are computationally feasible, we
 	investigate the influence of softly constraining the network clustering
 	coefficient on the convergence of a simple language game played on different
 	network types.
@@ -72,14 +76,83 @@ Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [[VUB AI lab]](https
 md"""
 ## Introduction
 
-In
+An **agent based model (ABM)** is essentially a high-dimensional and ingeniously crafted probability distribution $q(x)$ from which it is easy to sample a $x \sim q(x)$, but for which the *value* of the probability density function $q(x)$ itself is unavailable.
 
+Typically, we want to capture the behavior of the ABM by evaluating just a few well-chosen statistics that project the high-dimensional $x$ down to something simpler and lower-dimensional.
+Luckily, we don't need to know the value of $q(x)$ to do this: we just estimate the expected value of the statistics by averaging them over independent runs of the ABM.
+
+Formally, given the statistic of choice $f(x)$ and a set of $M$ samples ${\bf x} = \{x_m\}$, where each $x_m \sim q(x)$ is the output of an independent run of the ABM, the expected value is approximated by Monte Carlo integration:
+````math
+F := \langle f(x) \rangle_q \equiv \int dx\ q(x) f(x) \approx {1 \over M} \sum_{m=1}^M f(x_m)
+````
+To obtain the object of interest $F$, therefore, the ABM is run in what we define as the "forward" direction, schematically represented as:
+"""
+
+# ╔═╡ b0b47fa0-b9d1-4e46-be06-31233b3b6f03
+BlockDiag("""blockdiag {
+  default_fontsize = 15;
+  "ABM\t𝑞(𝑥)" <-> "𝐱" -> "𝐹";
+  "ABM\t𝑞(𝑥)"[color = "#D6E3F4"];
+  "𝐱"[color = "#F2F2F2"];
+  "𝐹"[color = "#DAEAD2"];
+  "𝐱" -> "𝐹"[thick];
+}""")
+
+# ╔═╡ b1d4c305-1f87-4a90-9d39-7519b1bb11ab
+md"""
+In words, this scheme reads from left to right that an ABM $q(x)$ is represented implicitly by a set of samples $\bf x$, from which the expected value of a statistic $F := \langle f(x)$ is derived.
+
+A **softly constrained agent-based model (SCABM)** arises when this scheme is traversed "backwards":
+"""
+
+# ╔═╡ de951afb-2596-4ef6-8c96-c8c03102eea9
+BlockDiag("""blockdiag {
+  default_fontsize = 15;
+  "SCABM\t𝑝(𝑥)" <-> "𝐱'" <- "𝐹'";
+  "SCABM\t𝑝(𝑥)"[color = "#DAEAD2"];
+  "𝐱'"[color = "#F2F2F2"];
+  "𝐹'"[color = "#D6E3F4"];
+  "𝐱'" <- "𝐹'"[thick];
+}""")
+
+# ╔═╡ c9fda3c0-882c-4f48-a225-f3e67d107f13
+md"""
+where the object of interest is now the set of samples ${\bf x'} = \{x_\ell'\}$.
+In the backward direction the expectation $\langle f(x') \rangle := F'$ is
+*constrained* to take a given value $F' \neq F$ and now we solve for the
+probability distribution $p(x')$ which satisfies that soft constraint while
+still as close as possible to the prior $q(x)$. It turns out that the optimal
+solution to this problem can be approximated by a simple reweighting of the
+original samples $\bf x$, from which the $\bf x'$ can be obtained by standard
+resampling such that roughly each $x_\ell' \sim p(x')$.
+
+By the same logic used in the first paragraph, the obtained $\bf x'$ then
+represents the probability distribution $p(x')$ of a new computer program
+automatically derived from the original ABM, which we call a **softly constrained
+agent-based model (SCABM)**. To show that SCABMs are computationally feasible, we
+investigate the influence of softly constraining the network clustering
+coefficient on the convergence of a simple language game played on different
+network types.
+"""
+
+# ╔═╡ 6ab8e802-d879-4ec0-a86b-ea1797d34c2b
+md"""
+Vary parameters so $F(\theta)$
+
+Note: different semantics: softly constraining not the same as regression. Show this with Gaussian; for example different errorbars. Interpretation as new ABM. And also, by softly constraining we avoid new hyperparameters -- we constrain hyperparameters "on the fly".
+
+The constraint influences all other statistics by wheighing.
+
+"[🎵Constraining me softly persists long🎵](https://youtu.be/oKOtzIo-uYw)"
+"""
+
+# ╔═╡ 8d827b33-d299-48fb-b3e6-b31dc26b9fe6
+md"""
 !!! terminology "Tip"
-	Some tips for using this notebook:
-	- Click the 📕 book icon to see a table of contents.
-    - Click the 👁️ eye icon to see the source of a cell.
-	- It's handy to have multiple views of this notebook. For example, open this notebook in two side-by-side browser windows so you can scroll back and forth without losing your current position.
-	- When running this notebook for the first time, Julia will take some time to install the relevant libraries and compile the code on the first pass. After this process, things should be (very) fast.
+	Some tips for using this [Pluto notebook](https://github.com/fonsp/Pluto.jl):
+	- Click the 📕 book icon on the right to see a table of contents.
+    - Most cells with source code are hidden to keep this notebook simple. To see the source, run this notebook (click *Edit or run this notebook*) in Pluto and click the 👁️ eye when hovering over a cell.
+	- When running this notebook for the first time, Pluto will take some time to install the relevant libraries and compile the code on the first pass. After this process, things should be (very) fast.
 """
 
 # ╔═╡ 017327e7-7c7d-40b5-8573-ec780f42384b
@@ -87,7 +160,9 @@ md"""
 ## The Naming Game
 
 !!! note
-	The [Medium blog post](https://medium.com/@ramongarciaseuma/dynamics-for-language-conventions-naming-game-8198c8383197)
+    The Naming Game is a very simple language game proposed in Dall’Asta+ (2006).
+	See this excellent [Medium blog post](https://medium.com/@ramongarciaseuma/dynamics-for-language-conventions-naming-game-8198c8383197) for a clear introduction.
+    The code below is directly based on the blog post; only our implementation of the network types differ.
 
 Network types:
 
@@ -115,7 +190,7 @@ md"""
 # ╔═╡ 9942dd32-e601-4a01-97ef-e3709080fea8
 begin # ABM parameters
 	N₀ = 30    # Expected number of agents
-	M = 10_000 # Number of samples in one ABM ensemble
+	M = 1000 # Number of samples in one ABM ensemble
 	T = 5      # Number of time steps the ABM is run
 
 	GRAPHTYPES = [:ErdosRenyi, :WattsStrogatz, :BarabasiAlbert]
@@ -268,7 +343,7 @@ end
 
 # ╔═╡ 5e84cf2f-5ff2-48a9-a4ef-b0f4fddf88cb
 begin # Plots
-	DPI = 1200
+	DPI = 300 # 1200 for poster
 	FONT = "Arial"
 	COLORSCHEME = ColorSchemes.Greys
 	
@@ -278,6 +353,13 @@ end
 
 # ╔═╡ e4bc40ca-8958-4807-a240-64fcb1fedcb4
 begin
+	function plotdiagram(ensemble)
+		@df DataFrame(ensemble) cornerplot(
+			[:C :S]; label = ["Clustering coefficient C", "Success rate S"],
+			group = :graphtype, compact = true, size=(400,300), labelfontsize=8
+		)
+	end
+	
 	function lambdas(σᶜ; c = 10, n = 100)
 		lim = c/σᶜ # In general (λσᶜ) ∼ N(0,1)
 		λ = LinRange(-lim, lim, n)
@@ -313,11 +395,12 @@ begin
 	end
 end
 
+# ╔═╡ deb3e957-1eb6-4ec9-be79-4a4c2dc10b39
+plotdiagram(ensemble)
+
 # ╔═╡ 8eb2581b-e4de-4fc5-b716-13bf4ff3ffcd
 begin
-	diagram = @df DataFrame(ensemble) cornerplot(
-		[:C :S]; label = ["Clustering coefficient C", "Success rate S"], group = :graphtype, compact = true, size=(400,300), labelfontsize=8
-	)
+	diagram = plotdiagram(ensemble)
 
 	states = plotstates!(diagram[2], ensemble) # Equation-of-state
 
@@ -386,19 +469,20 @@ md"""
 ## Conclusion
 
 Advantages:
+- very simple conceptual framework and computationally efficient; scales in linear time
 - A richer behavior than a straight line, with adaptive error bars (not shown)
 - You can resample from the new scabm and observe the samples
 - multiple constraints can be active at the same time
-- very simple conceptual framework and computationally efficient; scales in linear time
+
+To do:
+- Investigate variance of different estimators
+- More interesting models
+- Verify predictions from $p(x)$ on unseen data
+- Beyond reweighing and resampling: reconstruct the data with nested sampling in a high-dimensional space ($O(100)$ max)
 """
 
 # ╔═╡ a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
 md"## Appendices"
-
-# ╔═╡ ecf1f329-fffc-41d4-bf95-c6e1154a2dc8
-md"""
-### Theory
-"""
 
 # ╔═╡ 917b1c65-e48f-4e14-aff1-53cef88231a3
 md"""
@@ -465,7 +549,7 @@ LaTeXStrings = "~1.3.0"
 PlutoUI = "~0.7.39"
 ShortCodes = "~0.3.3"
 StatsBase = "~0.33.16"
-StatsFuns = "~1.0.1"
+StatsFuns = "~0.9.18"
 StatsPlots = "~0.14.34"
 """
 
@@ -552,12 +636,6 @@ deps = ["Artifacts", "Bzip2_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll",
 git-tree-sha1 = "4b859a208b2397a7a623a03449e4636bdb17bcf2"
 uuid = "83423d85-b0ee-5818-9007-b63ccbeb887a"
 version = "1.16.1+1"
-
-[[Calculus]]
-deps = ["LinearAlgebra"]
-git-tree-sha1 = "f641eb0a4f00c343bbc32346e1217b86f3ce9dad"
-uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
-version = "0.5.1"
 
 [[Chain]]
 git-tree-sha1 = "339237319ef4712e6e5df7758d0bccddf5c237d9"
@@ -713,12 +791,6 @@ git-tree-sha1 = "67e9001646db6e45006643bf37716ecd831d37d2"
 uuid = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 version = "2.9.1"
 
-[[DualNumbers]]
-deps = ["Calculus", "NaNMath", "SpecialFunctions"]
-git-tree-sha1 = "5837a837389fccf076445fce071c8ddaea35a566"
-uuid = "fa6b7ba4-c1ee-5f82-b5fc-ecf0adba8f74"
-version = "0.6.8"
-
 [[EarCut_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "3f3a2501fa7236e9b911e0f7a588c657e822bb6d"
@@ -769,9 +841,9 @@ version = "0.9.18"
 
 [[FillArrays]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "Statistics"]
-git-tree-sha1 = "246621d23d1f43e3b9c368bf3b72b2331a27c286"
+git-tree-sha1 = "deed294cde3de20ae0b2e0355a6c4e1c6a5ceffc"
 uuid = "1a297f60-69ca-5386-bcde-b61e274b549b"
-version = "0.13.2"
+version = "0.12.8"
 
 [[FixedPointNumbers]]
 deps = ["Statistics"]
@@ -883,12 +955,6 @@ deps = ["Artifacts", "Cairo_jll", "Fontconfig_jll", "FreeType2_jll", "Glib_jll",
 git-tree-sha1 = "129acf094d168394e80ee1dc4bc06ec835e510a3"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "2.8.1+1"
-
-[[HypergeometricFunctions]]
-deps = ["DualNumbers", "LinearAlgebra", "SpecialFunctions", "Test"]
-git-tree-sha1 = "cb7099a0109939f16a4d3b572ba8396b1f6c7c31"
-uuid = "34004b35-14d8-5ef3-9330-4cdb6864b03a"
-version = "0.3.10"
 
 [[Hyperscript]]
 deps = ["Test"]
@@ -1209,9 +1275,9 @@ version = "0.4.4"
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 
 [[Observables]]
-git-tree-sha1 = "fe29afdef3d0c4a8286128d4e45cc50621b1e43d"
+git-tree-sha1 = "dfd8d34871bc3ad08cd16026c1828e271d554db9"
 uuid = "510215fc-4207-5dde-b226-833fc4488ee2"
-version = "0.4.0"
+version = "0.5.1"
 
 [[OffsetArrays]]
 deps = ["Adapt"]
@@ -1502,10 +1568,10 @@ uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.33.16"
 
 [[StatsFuns]]
-deps = ["ChainRulesCore", "HypergeometricFunctions", "InverseFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
-git-tree-sha1 = "5783b877201a82fc0014cbf381e7e6eb130473a4"
+deps = ["ChainRulesCore", "InverseFunctions", "IrrationalConstants", "LogExpFunctions", "Reexport", "Rmath", "SpecialFunctions"]
+git-tree-sha1 = "5950925ff997ed6fb3e985dcce8eb1ba42a0bbe7"
 uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
-version = "1.0.1"
+version = "0.9.18"
 
 [[StatsPlots]]
 deps = ["AbstractFFTs", "Clustering", "DataStructures", "DataValues", "Distributions", "Interpolations", "KernelDensity", "LinearAlgebra", "MultivariateStats", "Observables", "Plots", "RecipesBase", "RecipesPipeline", "Reexport", "StatsBase", "TableOperations", "Tables", "Widgets"]
@@ -1835,15 +1901,23 @@ version = "0.9.1+5"
 
 # ╔═╡ Cell order:
 # ╟─7cd47b87-fceb-4995-970c-ae23e250fb46
+# ╟─22c16f23-cb6e-4b15-922b-32c4e4b9baba
 # ╟─8a8a6115-a178-4b97-bc77-371a85288363
+# ╟─b0b47fa0-b9d1-4e46-be06-31233b3b6f03
+# ╟─b1d4c305-1f87-4a90-9d39-7519b1bb11ab
+# ╟─de951afb-2596-4ef6-8c96-c8c03102eea9
+# ╟─c9fda3c0-882c-4f48-a225-f3e67d107f13
+# ╟─6ab8e802-d879-4ec0-a86b-ea1797d34c2b
+# ╟─8d827b33-d299-48fb-b3e6-b31dc26b9fe6
 # ╠═017327e7-7c7d-40b5-8573-ec780f42384b
 # ╟─9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
 # ╠═43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
 # ╠═f8282947-4e2b-40ff-a165-a3fa7e8875eb
-# ╠═a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
+# ╟─a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 # ╠═9942dd32-e601-4a01-97ef-e3709080fea8
-# ╠═6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
-# ╠═7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
+# ╠═deb3e957-1eb6-4ec9-be79-4a4c2dc10b39
+# ╟─6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
+# ╟─7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
 # ╠═9b0abb0f-6081-469e-8c3d-69f506cf1caf
 # ╠═9c70b5d1-a6dd-4687-a0d4-6fa2526286ee
 # ╠═5e84cf2f-5ff2-48a9-a4ef-b0f4fddf88cb
@@ -1857,7 +1931,6 @@ version = "0.9.1+5"
 # ╠═dd40ac6e-d08f-4663-b6c5-9809493e9612
 # ╠═fda9c33b-8657-4d8b-b74e-d0a035dd67eb
 # ╟─a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
-# ╠═ecf1f329-fffc-41d4-bf95-c6e1154a2dc8
 # ╠═917b1c65-e48f-4e14-aff1-53cef88231a3
 # ╠═f6e4d332-c8b8-425e-a1fe-83378552836c
 # ╠═e8c62155-902b-41f6-bc8d-6f8d74ed352a
