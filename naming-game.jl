@@ -34,163 +34,35 @@ let
 	]
 end
 
-# ╔═╡ 7cd47b87-fceb-4995-970c-ae23e250fb46
-md"""
-# **SCABMs**: Softly Constrained Agent-Based Models
-
-Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [[VUB AI lab]](https://ai.vub.ac.be/abacus/)
-
-!!! info "Abstract"
-
-	An **agent-based model (ABM)** can be thought of as a computer program that
-	implicitly defines a probability distribution $q(x)$ over all of its possible
-	outputs $x$. The density $q(x)$ cannot be evaluated directly, but is
-	represented by a set of samples ${\bf x} = \{x_m\}$, where each $x_m \sim q(x)$
-	is the output of an independent run of the ABM. We are typically after the
-	expectation value $F := \langle f(x) \rangle$ of some interesting statistic
-	$f(x)$, which can be estimated from the samples $\bf x$ in the usual way. To
-	obtain the object of interest $F$, therefore, the ABM is run in what we define
-	as the "forward" direction, schematically represented as $({\bf x} \rightarrow
-	F)$.
-	
-	It is also possible to run the ABM "backwards" $({\bf x'} \leftarrow F')$,
-	where the object of interest is now the set of samples ${\bf x'} = \{x_\ell'\}$.
-	In the backward direction the expectation $\langle f(x') \rangle := F'$ is
-	*constrained* to take a given value $F' \neq F$ and now we solve for the
-	probability distribution $p(x')$ which satisfies that soft constraint while
-	still as close as possible to the prior $q(x)$. It turns out that the optimal
-	solution to this problem can be approximated by a simple reweighting of the
-	original samples $\bf x$, from which the $\bf x'$ can be obtained by standard
-	resampling such that roughly each $x_\ell' \sim p(x')$.
-	
-	By the same logic used in the first paragraph, the obtained $\bf x'$ then
-	represents the probability distribution $p(x')$ of a new computer program
-	automatically derived from the original ABM, which we call a **softly constrained
-	agent-based model (SCABM)**. To show that SCABMs are computationally feasible, we
-	investigate the influence of softly constraining the network clustering
-	coefficient on the convergence of a simple language game played on different
-	network types.
-"""
-
-# ╔═╡ 8a8a6115-a178-4b97-bc77-371a85288363
-md"""
-## Introduction
-
-An **agent based model (ABM)** is essentially a high-dimensional and ingeniously crafted probability distribution $q(x)$ from which it is easy to sample a $x \sim q(x)$, but for which the *value* of the probability density function $q(x)$ itself is unavailable.
-
-Typically, we want to capture the behavior of the ABM by evaluating just a few well-chosen statistics that project the high-dimensional $x$ down to something simpler and lower-dimensional.
-Luckily, we don't need to know the value of $q(x)$ to do this: we just estimate the expected value of the statistics by averaging them over independent runs of the ABM.
-
-Formally, given the statistic of choice $f(x)$ and a set of $M$ samples ${\bf x} = \{x_m\}$, where each $x_m \sim q(x)$ is the output of an independent run of the ABM, the expected value is approximated by Monte Carlo integration:
-````math
-F := \langle f(x) \rangle_q \equiv \int dx\ q(x) f(x) \approx {1 \over M} \sum_{m=1}^M f(x_m)
-````
-To obtain the object of interest $F$, therefore, the ABM is run in what we define as the "forward" direction, schematically represented as:
-"""
-
 # ╔═╡ b0b47fa0-b9d1-4e46-be06-31233b3b6f03
 BlockDiag("""blockdiag {
   default_fontsize = 15;
-  "ABM\t𝑞(𝑥)" <-> "𝐱" -> "𝐹";
+  "ABM\t𝑞(𝑥)" -> "𝐱" -> "𝐹";
   "ABM\t𝑞(𝑥)"[color = "#D6E3F4"];
   "𝐱"[color = "#F2F2F2"];
   "𝐹"[color = "#DAEAD2"];
+  "ABM\t𝑞(𝑥)" -> "𝐱"[thick];
   "𝐱" -> "𝐹"[thick];
 }""")
-
-# ╔═╡ b1d4c305-1f87-4a90-9d39-7519b1bb11ab
-md"""
-In words, this scheme reads from left to right that an ABM $q(x)$ is represented implicitly by a set of samples $\bf x$, from which the expected value of a statistic $F := \langle f(x)$ is derived.
-
-A **softly constrained agent-based model (SCABM)** arises when this scheme is traversed "backwards":
-"""
 
 # ╔═╡ de951afb-2596-4ef6-8c96-c8c03102eea9
 BlockDiag("""blockdiag {
   default_fontsize = 15;
-  "SCABM\t𝑝(𝑥)" <-> "𝐱'" <- "𝐹'";
+  "SCABM\t𝑝(𝑥)" <- "𝐱'" <- "𝐹'";
   "SCABM\t𝑝(𝑥)"[color = "#DAEAD2"];
   "𝐱'"[color = "#F2F2F2"];
   "𝐹'"[color = "#D6E3F4"];
+  "SCABM\t𝑝(𝑥)" <- "𝐱'"[thick];
   "𝐱'" <- "𝐹'"[thick];
 }""")
-
-# ╔═╡ c9fda3c0-882c-4f48-a225-f3e67d107f13
-md"""
-where the object of interest is now the set of samples ${\bf x'} = \{x_\ell'\}$.
-In the backward direction the expectation $\langle f(x') \rangle := F'$ is
-*constrained* to take a given value $F' \neq F$ and now we solve for the
-probability distribution $p(x')$ which satisfies that soft constraint while
-still as close as possible to the prior $q(x)$. It turns out that the optimal
-solution to this problem can be approximated by a simple reweighting of the
-original samples $\bf x$, from which the $\bf x'$ can be obtained by standard
-resampling such that roughly each $x_\ell' \sim p(x')$.
-
-By the same logic used in the first paragraph, the obtained $\bf x'$ then
-represents the probability distribution $p(x')$ of a new computer program
-automatically derived from the original ABM, which we call a **softly constrained
-agent-based model (SCABM)**. To show that SCABMs are computationally feasible, we
-investigate the influence of softly constraining the network clustering
-coefficient on the convergence of a simple language game played on different
-network types.
-"""
-
-# ╔═╡ 6ab8e802-d879-4ec0-a86b-ea1797d34c2b
-md"""
-Vary parameters so $F(\theta)$
-
-Note: different semantics: softly constraining not the same as regression. Show this with Gaussian; for example different errorbars. Interpretation as new ABM. And also, by softly constraining we avoid new hyperparameters -- we constrain hyperparameters "on the fly".
-
-The constraint influences all other statistics by wheighing.
-
-"[🎵Constraining me softly persists long🎵](https://youtu.be/oKOtzIo-uYw)"
-"""
-
-# ╔═╡ 8d827b33-d299-48fb-b3e6-b31dc26b9fe6
-md"""
-!!! terminology "Tip"
-	Some tips for using this [Pluto notebook](https://github.com/fonsp/Pluto.jl):
-	- Click the 📕 book icon on the right to see a table of contents.
-    - Most cells with source code are hidden to keep this notebook simple. To see the source, run this notebook (click *Edit or run this notebook*) in Pluto and click the 👁️ eye when hovering over a cell.
-	- When running this notebook for the first time, Pluto will take some time to install the relevant libraries and compile the code on the first pass. After this process, things should be (very) fast.
-"""
-
-# ╔═╡ 017327e7-7c7d-40b5-8573-ec780f42384b
-md"""
-## The Naming Game
-
-!!! note
-    The Naming Game is a very simple language game proposed in Dall’Asta+ (2006).
-	See this excellent [Medium blog post](https://medium.com/@ramongarciaseuma/dynamics-for-language-conventions-naming-game-8198c8383197) for a clear introduction.
-    The code below is directly based on the blog post; only our implementation of the network types differ.
-
-Network types:
-
-- **Erdos-Renyi**: random
-- **Barabasi-Albert**: scale-free
-  * Preferential attachment, 80/20, hubs
-  * Short average path length
-- **Watts-Strogatz**: small world
-  * Connectedness
-  * High clustering $C$ "yet" small mean geodesic path length
-"""
-
-# ╔═╡ 9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
-md"`[julia version 1.6.3]`"
 
 # ╔═╡ f8282947-4e2b-40ff-a165-a3fa7e8875eb
 Random.seed!(123)
 
-# ╔═╡ a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
-md"""
-!!! terminology "Tip"
-	Pluto notebooks are reactive, so you can change the ABM parameters below and execute the cell. The changes will propagate throughout the notebook.
-"""
-
 # ╔═╡ 9942dd32-e601-4a01-97ef-e3709080fea8
 begin # ABM parameters
 	N₀ = 30    # Expected number of agents
-	M = 1000 # Number of samples in one ABM ensemble
+	M = 10_000 # Number of samples in one ABM ensemble
 	T = 5      # Number of time steps the ABM is run
 
 	GRAPHTYPES = [:ErdosRenyi, :WattsStrogatz, :BarabasiAlbert]
@@ -318,23 +190,23 @@ end
 
 # ╔═╡ 9c70b5d1-a6dd-4687-a0d4-6fa2526286ee
 begin
-	function SCABM!(ensemble, λ)
-		@transform!(ensemble, :logweight = +λ*(:C)) # Use `+` convention
+	function weigh!(ensemble, λ)
+		@transform!(ensemble, :weight = softmax(+λ*(:C))) # Use `+λ` convention
+		return ensemble
 	end
 
-	lwmean(x, logweight) = mean(x, Weights(softmax(logweight), 1.))
-	lwstd(x, logweight) = std(x, Weights(softmax(logweight), 1.))
+	wmean(x, w) = mean(x, Weights(w, 1.))
+	wstd(x, w) = std(x, Weights(w, 1.))
 
 	function project!(ensemble, λ)
-		SCABM!(ensemble, λ)
-		@chain ensemble begin
-			@combine $AsTable = (
-				λ = λ,
-				μᶜ = lwmean(:C, :logweight),
-				σᶜ = lwstd(:C, :logweight),
-				μˢ = lwmean(:S, :logweight),
-				σˢ = lwstd(:S, :logweight)
-			)
+		weigh!(ensemble, λ)
+		@combine ensemble begin
+			λ = λ
+			νᵐ = floor(Int, 1/maximum(:weight))
+			μᶜ = wmean(:C, :weight)
+			σᶜ = wstd(:C, :weight)
+			μˢ = wmean(:S, :weight)
+			σˢ = wstd(:S, :weight)
 		end
 	end
 
@@ -409,6 +281,127 @@ begin
 	diagram
 end
 
+# ╔═╡ c6dcddcf-0d12-4e9e-b7fa-f761f5f2cacf
+let
+	using Interpolations
+	
+	extractname(df) = string(first(df.graphtype))
+	atzero(λ, x) = LinearInterpolation(λ, x)(zero(λ))
+
+	p = plot(;
+		xticks = -10:10, yscale = :log,
+		xlabel = "z", ylabel = "Number of useable samples"
+	)
+	
+	for df in states
+		graphtype = extractname(df)
+		μ = @df df atzero(:λ, :μᶜ)
+		σ = @df df atzero(:λ, :σᶜ)
+		z = @. (df.μᶜ - μ)/σ
+		@df df plot!(p, z, :νᵐ; label = graphtype, lw = 3)
+	end
+	p
+end
+
+# ╔═╡ 7cd47b87-fceb-4995-970c-ae23e250fb46
+md"""
+# **SCABMs**: Softly Constrained Agent-Based Models
+
+Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [[VUB AI lab]](https://ai.vub.ac.be/abacus/)
+"""
+
+# ╔═╡ 8a8a6115-a178-4b97-bc77-371a85288363
+md"""
+## Introduction
+
+An **agent-based model (ABM)** can be thought of as a computer program that implicitly defines a probability distribution $q(x)$ over all of its possible outputs $x$.
+It is essentially a high-dimensional and ingeniously crafted probability distribution from which it is easy to sample an $x \sim q(x)$, but for which the *value* of the probability density function $q(x)$ itself is unavailable.
+
+Typically, we want to capture the behavior of the ABM by evaluating just a few well-chosen statistics that project the high-dimensional $x$ down to something simpler and lower-dimensional.
+Luckily, we don't need to know the value of $q(x)$ to do this: we just estimate the expected value of the statistics by averaging them over independent runs of the ABM.
+
+Formally, given a statistic of choice $f(x)$ and a set of $M$ samples ${\bf x} = \{x_m\}$, where each $x_m \sim q(x)$ is the output of an independent run of the ABM, the expected value is approximated by Monte Carlo integration:
+````math
+F := \langle f(x) \rangle_q \equiv \int dx\ q(x) f(x) \approx {1 \over M} \sum_{m=1}^M f(x_m)
+````
+To obtain the $F$, therefore, the ABM is run in what we define as the "**forward**" direction, schematically represented as:
+"""
+
+# ╔═╡ b1d4c305-1f87-4a90-9d39-7519b1bb11ab
+md"""
+In words, this scheme reads that running an ABM $q(x)$ repeatedly produces a set of samples $\bf x$ from which the expected value of a statistic $F := \langle f(x) \rangle_q$ can be estimated. The object of interest $F$ is thus obtained from left to right.
+"""
+
+# ╔═╡ a598718d-b65f-41d3-829f-bbb82888002b
+md"""
+Now we introduce the idea of running the ABM "**backwards**":
+"""
+
+# ╔═╡ c9fda3c0-882c-4f48-a225-f3e67d107f13
+md"""
+The object of interest is now the set of samples ${\bf x'} = \{x_\ell'\}$, which implicity represents a new probability distribution $p(x)$.
+In the backward direction the expectation
+````math
+\langle f(x') \rangle_p \equiv \int dx\ p(x) f(x) := F'
+````
+is *constrained* to take a given value $F' \neq F$ and now we solve for the probability distribution $p(x')$ which satisfies that soft constraint while still as close as possible to the prior $q(x)$.
+Below we show that the optimal solution to this problem can be approximated for some range of $F'$ by a simple reweighting of the original samples $\bf x$, from which the $\bf x'$ can be obtained by standard resampling such that roughly each $x_\ell' \sim p(x')$.
+
+The obtained $\bf x'$ then represents the probability distribution $p(x')$ of a new computer program automatically derived from the original ABM, which we call a **softly constrained agent-based model (SCABM)**.
+
+We will illustrate how SCABMs are an alternative way of analyzing ABMs in the next sections and give some conclusions about their strengths and weaknesses.
+As an example application we investigate the influence of softly constraining the network clustering
+coefficient on the convergence of a simple language game played on different
+network types.
+"""
+
+# ╔═╡ 6ab8e802-d879-4ec0-a86b-ea1797d34c2b
+md"""
+If $F' = F$, then $p(x) = q(x)$.
+
+Vary parameters so $F(\theta)$
+
+Note: different semantics: softly constraining not the same as regression. Show this with Gaussian; for example different errorbars. Interpretation as new ABM. And also, by softly constraining we avoid new hyperparameters -- we constrain hyperparameters "on the fly".
+"""
+
+# ╔═╡ 8d827b33-d299-48fb-b3e6-b31dc26b9fe6
+md"""
+!!! terminology "Tip"
+	Some tips for using this [Pluto notebook](https://github.com/fonsp/Pluto.jl):
+	- Click the 📕 book icon on the right to see a table of contents.
+    - Most cells with source code are hidden to keep this notebook simple. To see the source, run this notebook (click *Edit or run this notebook*) in Pluto and click the 👁️ eye when hovering over a cell.
+	- When running this notebook for the first time, Pluto will take some time to install the relevant libraries and compile the code on the first pass. After this process, things should be (very) fast.
+"""
+
+# ╔═╡ 017327e7-7c7d-40b5-8573-ec780f42384b
+md"""
+## Application
+
+!!! note
+    The Naming Game is a very simple language game proposed in Dall’Asta+ (2006).
+	See this excellent [Medium blog post](https://medium.com/@ramongarciaseuma/dynamics-for-language-conventions-naming-game-8198c8383197) for a clear introduction.
+    The code below is directly based on the blog post; only our implementation of the network types differ.
+
+Network types:
+
+- **Erdos-Renyi**: random
+- **Barabasi-Albert**: scale-free
+  * Preferential attachment, 80/20, hubs
+  * Short average path length
+- **Watts-Strogatz**: small world
+  * Connectedness
+  * High clustering $C$ "yet" small mean geodesic path length
+"""
+
+# ╔═╡ 9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
+md"`[julia version 1.6.3]`"
+
+# ╔═╡ a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
+md"""
+!!! terminology "Tip"
+	Pluto notebooks are reactive, so you can change the ABM parameters below and execute the cell. The changes will propagate throughout the notebook.
+"""
+
 # ╔═╡ 4f4c249a-eaf4-46a9-a5f3-0887715a119c
 states
 
@@ -416,7 +409,7 @@ states
 begin
 	function sample_graph(ensemble, graphtype)
 		e = ensemble[(graphtype,)]
-		i = sample(1:nrow(e), Weights(softmax(e.logweight), 1.))
+		i = sample(1:nrow(e), Weights(e.weight, 1.))
 		s = e[i,:]
 		g = sample_calibrated_graph(s.N, graphtype; seed = s.graphseed)
 		g, s
@@ -426,8 +419,8 @@ begin
 		scatter!(p, [C], [S], markershape = markershape, markercolor = :black)
 	end
 
-	function visualize!(ensemble, graphtype, λ, diagram = nothing; ms = :star4, title = false)
-		SCABM!(ensemble, λ)
+	function visualize!(ensemble, graphtype, λ, diagram = nothing; ms = :star4, title = true)
+		weigh!(ensemble, λ)
 		g, s = sample_graph(ensemble, graphtype)
 
 		isnothing(diagram) || mark_diagram!(diagram[2], [s.C], [s.S], ms)
@@ -436,8 +429,11 @@ begin
 		c = local_clustering_coefficient(g)
 		
 		colors = get.(Ref(COLORSCHEME), c)
-		name = "$graphtype(N = $(s.N)): λ = $λ, C = $C, S = $S"
-		p = graphplot(g; title = title ? name : "", nodecolor = colors, nodesize = .2, titlefontsize = 9)
+		name = "$graphtype ⋅ C = $C ⋅ S = $S"
+		p = graphplot(
+			g; title = title ? name : "", nodecolor = colors,
+			nodesize = .2, titlefontsize = 10
+		)
 
 		savefig(p, "$name.png")
 
@@ -519,6 +515,43 @@ With the Poisson sampling in place, the SCABM method gave consistent results thr
 # ╔═╡ dcbfc502-4b53-40e4-b735-9a2aadc96538
 md"### References"
 
+# ╔═╡ c2658679-5a20-446d-90d5-644936323b8f
+"""
+Sample `ν` equally weighted samples from an ensemble of weighted
+(posterior) samples using the staircase sampling method from
+Sivia & Skilling (2006, p. 197).
+"""
+function staircase_sampling(
+	ensemble, ν; weight = ensemble.weight, rng = Random.GLOBAL_RNG
+)
+	νmax = 1/maximum(weight)
+	ν > νmax && error("Maximum number of samples is $(floor(νmax))")
+	
+	S = rand(rng)
+	current = 0
+	samples = zeros(Int, ν)
+	for i in 1:nrow(ensemble)
+		S += ν*weight[i]
+		if floor(S) > current
+			current += 1
+			samples[current] = i
+		end
+	end
+	return ensemble[samples,:]
+end
+
+# ╔═╡ 0957f4e8-2d3a-4c09-b0bc-453d9c2d005a
+let
+	# 
+	e = weigh!(ensemble, -10.)
+
+	e = e[(:BarabasiAlbert,)]
+	ν = 1000
+
+	SCABM = staircase_sampling(e, ν)
+	wmean(e.S, e.weight), mean(SCABM.S)
+end
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
@@ -529,6 +562,7 @@ Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 GraphRecipes = "bd48cda9-67a9-57be-86fa-5b3c104eda73"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
+Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -545,6 +579,7 @@ Distributions = "~0.25.59"
 DrWatson = "~2.9.1"
 GraphRecipes = "~0.5.9"
 Graphs = "~1.7.0"
+Interpolations = "~0.13.6"
 LaTeXStrings = "~1.3.0"
 PlutoUI = "~0.7.39"
 ShortCodes = "~0.3.3"
@@ -1905,9 +1940,10 @@ version = "0.9.1+5"
 # ╟─8a8a6115-a178-4b97-bc77-371a85288363
 # ╟─b0b47fa0-b9d1-4e46-be06-31233b3b6f03
 # ╟─b1d4c305-1f87-4a90-9d39-7519b1bb11ab
+# ╟─a598718d-b65f-41d3-829f-bbb82888002b
 # ╟─de951afb-2596-4ef6-8c96-c8c03102eea9
 # ╟─c9fda3c0-882c-4f48-a225-f3e67d107f13
-# ╟─6ab8e802-d879-4ec0-a86b-ea1797d34c2b
+# ╠═6ab8e802-d879-4ec0-a86b-ea1797d34c2b
 # ╟─8d827b33-d299-48fb-b3e6-b31dc26b9fe6
 # ╠═017327e7-7c7d-40b5-8573-ec780f42384b
 # ╟─9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
@@ -1935,6 +1971,9 @@ version = "0.9.1+5"
 # ╠═f6e4d332-c8b8-425e-a1fe-83378552836c
 # ╠═e8c62155-902b-41f6-bc8d-6f8d74ed352a
 # ╟─dcbfc502-4b53-40e4-b735-9a2aadc96538
-# ╟─ff785b01-f0f3-4feb-9fc0-f07a5b86faa5
+# ╠═ff785b01-f0f3-4feb-9fc0-f07a5b86faa5
+# ╠═0957f4e8-2d3a-4c09-b0bc-453d9c2d005a
+# ╠═c2658679-5a20-446d-90d5-644936323b8f
+# ╠═c6dcddcf-0d12-4e9e-b7fa-f761f5f2cacf
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
