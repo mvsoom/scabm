@@ -350,9 +350,33 @@ which is nearly linear when $\sigma^2$ is small (as is the case); it acts like a
 
 # ╔═╡ 2b261389-fb04-41a3-87cd-29656f39a9a4
 let
-	λ = sort(randn(100))
-	lz = logz.(λ, "ErdosRenyi")
-	scatter(λ, lz)
+	function yticks(ϵ)
+		scale = sort(unique(round.(Int, log10.(ϵ))))
+		ticks = (10.) .^ scale
+		labels = ["1:$(10^-s)" for s in scale]
+		ticks, labels
+	end
+
+	λ = -600:10.:600
+	xlim = 3
+
+	p = plot(;
+		xticks = -10:10, xlim = (-xlim, xlim), yscale = :log,
+		xlabel = "z", ylabel = "Sample efficiency"
+	)
+
+	for graphtype in ["ErdosRenyi", "BarabasiAlbert", "WattsStrogatz"]
+		lz, dlz = logz_annealed(λ, graphtype, 10)
+		F = -dlz
+		DKL = @. (-λ*F) - lz
+		ϵ = exp.(-DKL)
+
+		F0 = groupby(gccdf, :graphtype)[(graphtype,)]
+		z = @. (F - F0.μ)/F0.σ
+		plot!(p, z, ϵ; label = graphtype, yscale = :log, yticks = yticks(ϵ))
+	end
+
+	p
 end
 
 # ╔═╡ 81c409f2-ba3b-4f84-8d01-82b35767a509

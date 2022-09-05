@@ -6,12 +6,6 @@ using InteractiveUtils
 
 # ╔═╡ 22c16f23-cb6e-4b15-922b-32c4e4b9baba
 begin
-	using PlutoUI
-	TableOfContents()
-end
-
-# ╔═╡ 43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
-begin
 	using Agents
 	using Graphs
 	using Distributions
@@ -24,6 +18,11 @@ begin
 	using Random
 	using DataFramesMeta
 	using StatsBase
+	using PlutoUI
+
+	Random.seed!(123)
+
+	TableOfContents()
 end
 
 # ╔═╡ ff785b01-f0f3-4feb-9fc0-f07a5b86faa5
@@ -31,6 +30,7 @@ let
 	using ShortCodes
 	[
 		DOI("10.1103/PhysRevE.74.036105"),
+		DOI("10.1103/PhysRevE.102.012309")
 	]
 end
 
@@ -56,9 +56,6 @@ BlockDiag("""blockdiag {
   "𝐱'" <- "𝐹'"[thick];
 }""")
 
-# ╔═╡ f8282947-4e2b-40ff-a165-a3fa7e8875eb
-Random.seed!(123)
-
 # ╔═╡ 9942dd32-e601-4a01-97ef-e3709080fea8
 begin # ABM parameters
 	N₀ = 30    # Expected number of agents
@@ -66,6 +63,8 @@ begin # ABM parameters
 	T = 5      # Number of time steps the ABM is run
 
 	GRAPHTYPES = [:ErdosRenyi, :WattsStrogatz, :BarabasiAlbert]
+
+	Random.seed!(123)
 end;
 
 # ╔═╡ 6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
@@ -87,7 +86,7 @@ function sample_calibrated_graph(N, graphtype; seed = -1)
 		error("Unknown graphtype: $graphtype")
 	end
 	return g
-end;
+end
 
 # ╔═╡ 7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
 # Define the ABM according to Dall’Asta+ (2006)
@@ -195,14 +194,20 @@ begin
 		return ensemble
 	end
 
+	function sample_efficiency(weights)
+		νᵐ = floor(Int, 1/maximum(weights))
+		e = νᵐ / length(weights)
+	end
+
 	wmean(x, w) = mean(x, Weights(w, 1.))
 	wstd(x, w) = std(x, Weights(w, 1.))
+	wquantile(x, w, p) = quantile(x, Weights(w, 1.), p)
 
 	function project!(ensemble, λ)
 		weigh!(ensemble, λ)
 		@combine ensemble begin
 			λ = λ
-			νᵐ = floor(Int, 1/maximum(:weight))
+			ϵ = sample_efficiency(:weight)
 			μᶜ = wmean(:C, :weight)
 			σᶜ = wstd(:C, :weight)
 			μˢ = wmean(:S, :weight)
@@ -221,6 +226,18 @@ begin # Plots
 	
 	gr(dpi = DPI)
 	default(fontfamily = FONT)
+end
+
+# ╔═╡ f66bed21-ea37-44c1-a238-93bc22778ac3
+let
+	function example(graphtype; N = 10, size = 500)
+		g = sample_calibrated_graph(N, graphtype; seed = 1111)
+		c = local_clustering_coefficient(g)
+		colors = get.(Ref(COLORSCHEME), c)
+		graphplot(g; title=graphtype, titlefontsize = 10, size = (size, size/2), nodecolor = colors, nodesize = .2)
+	end
+
+	plot(example.([:ErdosRenyi, :WattsStrogatz, :BarabasiAlbert])..., layout = (1,3))
 end
 
 # ╔═╡ e4bc40ca-8958-4807-a240-64fcb1fedcb4
@@ -262,7 +279,6 @@ begin
 			@df sᵍ plot!(p, :μᶜ, :μˢ; linewidth=3, linecolor = :black, ylim = (0,1))
 			annotate!(p, μ, 1., text(k.graphtype, FONT, 6))
 		end
-
 		s
 	end
 end
@@ -276,8 +292,6 @@ begin
 
 	states = plotstates!(diagram[2], ensemble) # Equation-of-state
 
-	savefig(diagram, "diagram.png")
-
 	diagram
 end
 
@@ -288,9 +302,19 @@ let
 	extractname(df) = string(first(df.graphtype))
 	atzero(λ, x) = LinearInterpolation(λ, x)(zero(λ))
 
+	function yticks()
+		ϵ = DataFrame(states).:ϵ
+		scale = sort(unique(round.(Int, log10.(ϵ))))
+		ticks = (10.) .^ scale
+		labels = ["1:$(10^-s)" for s in scale]
+		ticks, labels
+	end
+
+	xlim = 3
+
 	p = plot(;
-		xticks = -10:10, yscale = :log,
-		xlabel = "z", ylabel = "Number of useable samples"
+		xticks = -10:10, xlim = (-xlim, xlim), yscale = :log,
+		yticks = yticks(), xlabel = "z", ylabel = "Sample efficiency"
 	)
 	
 	for df in states
@@ -298,8 +322,11 @@ let
 		μ = @df df atzero(:λ, :μᶜ)
 		σ = @df df atzero(:λ, :σᶜ)
 		z = @. (df.μᶜ - μ)/σ
-		@df df plot!(p, z, :νᵐ; label = graphtype, lw = 3)
+		@df df plot!(p, z, :ϵ; label = graphtype, lw = 3)
 	end
+
+	vspan!(p, [-2, 2]; fillalpha = .1, fillcolor = :grey, label = false)
+	
 	p
 end
 
@@ -308,28 +335,33 @@ md"""
 # **SCABMs**: Softly Constrained Agent-Based Models
 
 Marnix Van Soom & Bart de Boer `{marnix,bart}@ai.vub.ac.be` [[VUB AI lab]](https://ai.vub.ac.be/abacus/)
+
+!!! note "Abstract"
+
+    In this notebook we look at the effect of constraining the network clustering coefficient $C$ on the success rate $S$ of a simple language game played by agents on a networks, in order to gauge the influence of social network structure on emerging language conventions.
+	This is an example of a generic class of experiments on agent-based models (ABMs) made possible by a simple and flexible conceptual framework called softly constrained agent-based models (SCABMs), which we introduce and discuss here.
 """
 
 # ╔═╡ 8a8a6115-a178-4b97-bc77-371a85288363
 md"""
-## Introduction
+## Introduction and motivation
 
 An **agent-based model (ABM)** can be thought of as a computer program that implicitly defines a probability distribution $q(x)$ over all of its possible outputs $x$.
 It is essentially a high-dimensional and ingeniously crafted probability distribution from which it is easy to sample an $x \sim q(x)$, but for which the *value* of the probability density function $q(x)$ itself is unavailable.
 
-Typically, we want to capture the behavior of the ABM by evaluating just a few well-chosen statistics that project the high-dimensional $x$ down to something simpler and lower-dimensional.
+Typically, we want to capture the behavior of the ABM by evaluating just a few well-chosen statistics that project the high-dimensional $x$ down to something lower-dimensional and simpler.
 Luckily, we don't need to know the value of $q(x)$ to do this: we just estimate the expected value of the statistics by averaging them over independent runs of the ABM.
 
-Formally, given a statistic of choice $f(x)$ and a set of $M$ samples ${\bf x} = \{x_m\}$, where each $x_m \sim q(x)$ is the output of an independent run of the ABM, the expected value is approximated by Monte Carlo integration:
+Formally, given a statistic of choice $f(x)$ and a set of $M$ samples ${\bf x} = \{x_m\}$, where each $x_m \sim q(x)$ is the output of an independent run of the ABM, the expected value $F$ is approximated by Monte Carlo integration:
 ````math
 F := \langle f(x) \rangle_q \equiv \int dx\ q(x) f(x) \approx {1 \over M} \sum_{m=1}^M f(x_m)
 ````
-To obtain the $F$, therefore, the ABM is run in what we define as the "**forward**" direction, schematically represented as:
+To obtain $F$, therefore, the ABM is run in what we define as the "**forward**" direction, schematically represented as:
 """
 
 # ╔═╡ b1d4c305-1f87-4a90-9d39-7519b1bb11ab
 md"""
-In words, this scheme reads that running an ABM $q(x)$ repeatedly produces a set of samples $\bf x$ from which the expected value of a statistic $F := \langle f(x) \rangle_q$ can be estimated. The object of interest $F$ is thus obtained from left to right.
+In words, this diagram reads that running an ABM $q(x)$ repeatedly produces a set of samples $\bf x$ from which the expected value of a statistic $F := \langle f(x) \rangle_q$ can be estimated. The object of interest $F$ is thus obtained from left to right.
 """
 
 # ╔═╡ a598718d-b65f-41d3-829f-bbb82888002b
@@ -342,59 +374,96 @@ md"""
 The object of interest is now the set of samples ${\bf x'} = \{x_\ell'\}$, which implicity represents a new probability distribution $p(x)$.
 In the backward direction the expectation
 ````math
-\langle f(x') \rangle_p \equiv \int dx\ p(x) f(x) := F'
+\langle f(x) \rangle_p \equiv \int dx\ p(x) f(x) := F'
 ````
-is *constrained* to take a given value $F' \neq F$ and now we solve for the probability distribution $p(x')$ which satisfies that soft constraint while still as close as possible to the prior $q(x)$.
-Below we show that the optimal solution to this problem can be approximated for some range of $F'$ by a simple reweighting of the original samples $\bf x$, from which the $\bf x'$ can be obtained by standard resampling such that roughly each $x_\ell' \sim p(x')$.
+is *constrained* to take a given value $F' \neq F$ and now we solve for the probability distribution $p(x)$ which satisfies that soft constraint while still as close as possible to the prior $q(x)$.
+We show in the appendix that the optimal solution to this problem can be approximated for some range of $F'$ by a simple reweighting of the original samples $\bf x$, from which the $\bf x'$ can be obtained by standard resampling such that roughly each $x_\ell' \sim p(x)$.
+We pay for the efficiency of this approximation by a corresponding cost in samples, such that we can get only $L = \epsilon M$ samples $\bf x'$ from $p(x)$ given $M$ samples $\bf x$ from $q(x)$, where $\epsilon \in (0,1]$ is the sampling efficiency.
+Its value depends strongly on $F'$.
 
-The obtained $\bf x'$ then represents the probability distribution $p(x')$ of a new computer program automatically derived from the original ABM, which we call a **softly constrained agent-based model (SCABM)**.
+Returning to the second diagram above, we may apply the same logic used in the first paragraph and conclude that the obtained $\bf x'$ represent the probability distribution $p(x)$ of a new computer program automatically derived from the original ABM, which we call a **softly constrained agent-based model (SCABM)**. "Softly constrained" means that we only constrain the *expectation* of $f(x)$, rather than demanding that $f(x)$ take on a certain "hard" value.
 
-We will illustrate how SCABMs are an alternative way of analyzing ABMs in the next sections and give some conclusions about their strengths and weaknesses.
-As an example application we investigate the influence of softly constraining the network clustering
-coefficient on the convergence of a simple language game played on different
-network types.
-"""
-
-# ╔═╡ 6ab8e802-d879-4ec0-a86b-ea1797d34c2b
-md"""
-If $F' = F$, then $p(x) = q(x)$.
-
-Vary parameters so $F(\theta)$
-
-Note: different semantics: softly constraining not the same as regression. Show this with Gaussian; for example different errorbars. Interpretation as new ABM. And also, by softly constraining we avoid new hyperparameters -- we constrain hyperparameters "on the fly".
+As the name suggests, a SCABM is itself just another ABM, except that we don't have access to its source code -- we can only study it indirectly via the $\bf x'$.
+In particular, using the same rule as above we can estimate the expected value of any statistic
+````math
+G := \langle g(x) \rangle_p \equiv \int dx\ p(x) g(x) \approx {1 \over L} \sum_{\ell=1}^L g(x'_\ell)
+````
+This expectation $G$ is a function of the constraint $F'$, so $G \equiv G(F')$.
+**This allows us to characterize the behavior of an ABM by studying the effect of constraining the expected value of one statistic on the expected value of another statistic.**
+In this notebook, for example, we will look at the effect of constraining the average network clustering coefficient $C$ on the average success rate $S$ of a simple language game played by agents on random networks, in order to gauge certain aspects of the influence of social network structure on emerging language conventions.
 """
 
 # ╔═╡ 8d827b33-d299-48fb-b3e6-b31dc26b9fe6
 md"""
 !!! terminology "Tip"
-	Some tips for using this [Pluto notebook](https://github.com/fonsp/Pluto.jl):
+	Before we continue, here are some tips for using this [Pluto notebook](https://github.com/fonsp/Pluto.jl).
 	- Click the 📕 book icon on the right to see a table of contents.
-    - Most cells with source code are hidden to keep this notebook simple. To see the source, run this notebook (click *Edit or run this notebook*) in Pluto and click the 👁️ eye when hovering over a cell.
+    - (Most) cells with source code are hidden to keep this notebook legible. To see the source, run this notebook (click *Edit or run this notebook*) in Pluto and click the 👁️ eye when hovering over a cell.
 	- When running this notebook for the first time, Pluto will take some time to install the relevant libraries and compile the code on the first pass. After this process, things should be (very) fast.
+"""
+
+# ╔═╡ b4d0347f-4074-46da-a3d0-3ae9b7045cf8
+md"""
+## Playing naming games with SCABMs
+
+To show that SCABMs are useful and computationally feasible, we investigate the influence of softly constraining the clustering coefficient $C$ on the success rate $S$ of a simple language game called the **naming game** played by the agents on three different network types.
+
+!!! note
+	See this excellent [Medium blog post](https://medium.com/@ramongarciaseuma/dynamics-for-language-conventions-naming-game-8198c8383197) for a clear introduction to the naming game of Dall’Asta+ (2006).
+    The code in this notebook is equivalent to the code in the blog post; only our implementation of the network types differs.
 """
 
 # ╔═╡ 017327e7-7c7d-40b5-8573-ec780f42384b
 md"""
-## Application
+### Description of the ABM
 
-!!! note
-    The Naming Game is a very simple language game proposed in Dall’Asta+ (2006).
-	See this excellent [Medium blog post](https://medium.com/@ramongarciaseuma/dynamics-for-language-conventions-naming-game-8198c8383197) for a clear introduction.
-    The code below is directly based on the blog post; only our implementation of the network types differ.
+Given a network of $N$ agents, the naming game is a simple model of how a set of shared conventions can emerge without obvious high-level intervention.
+Agents need to agree on a word for one global concept $X$.
+Initially, each agent comes up with a random word for $X$.
+Then, taking turns, each agent communicates with a random neighbor in the network and picks a random word from their lexicon to describe $X$.
+The communication can be a success or a failure: 
+- Success: their neighbor has heard this word before (it is in their lexicon) and both agents agree that this is the "right" word for $X$; their lexicons collapse to just this one word.
+- Failure: their neighbor has not heard this word before (it is not in their lexicon) and the word is simply appended to the neighbor's lexicon.
+The game is played for $T$ timesteps (during one timestep, each agent communicates once) after which the **success rate $S$** is evaluated, which is the fraction of successful communications during the last timestep.
 
-Network types:
+As mentioned before, we consider three different network models to capture different types of communication in social networks.
+Each network has $N$ nodes (the number of agents) and is calibrated to the Erdős–Rényi model to have roughly $E \approx N(N-1)/4$ connections.
+The models are:
+1. [Erdős–Rényi](https://en.wikipedia.org/wiki/Erd%C5%91s%E2%80%93R%C3%A9nyi_model):
+     A network where (in this experiment) each possible connection between a pair of agents is present or not with a probability of $p = 0.5$.
+     This represents a random social network with little "intentional" structure.
+2. [Watts-Strogatz](https://en.wikipedia.org/wiki/Watts%E2%80%93Strogatz_model):
+   A "small world" network where agents are mostly connected within clusters, but sometimes to agents in "distant" clusters.
+3. [Barabási–Albert](https://en.wikipedia.org/wiki/Barab%C3%A1si%E2%80%93Albert_model):
+   A "scale-free" network where a few popular nodes have lots of connections, while the majority has relatively few.
+We will characterize these networks by a single statistic: the **clustering coefficient $C$**.
+More precisely, it is defined as the [mean local clustering coefficient](https://en.wikipedia.org/wiki/Clustering_coefficient):
+````math
+C = {1 \over N} \sum_{n=1}^N C_n
+````
+where $C_n \in [0,1]$ is the local clustering coefficient of node (agent) $n$.
+Below we show some example networks for $N = 10$ agents where the nodes are colored according to $C_n$ (darker means higher).
+"""
 
-- **Erdos-Renyi**: random
-- **Barabasi-Albert**: scale-free
-  * Preferential attachment, 80/20, hubs
-  * Short average path length
-- **Watts-Strogatz**: small world
-  * Connectedness
-  * High clustering $C$ "yet" small mean geodesic path length
+# ╔═╡ 49458fbd-e8e9-4e67-872f-84abd04c56f2
+md"""
+Finally, an important design of our ABM is that the number of agents $N$ is not constant but varies per run.
+Rather, the $N_0$ parameter of the ABM specifies the *expected amount* of agents, and for a given run we sample
+````math
+N \sim \text{Poisson}(N_0)
+````
+so roughly $N \simeq N_0 \pm \sqrt{N_0}$
+"""
+
+# ╔═╡ 4efd79a5-3e7a-4b3f-8c11-c61a3c9b0e0b
+md"""
+### Running the ABM
 """
 
 # ╔═╡ 9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
-md"`[julia version 1.6.3]`"
+md"""
+This notebook was written with `[julia version 1.6.3]`.
+"""
 
 # ╔═╡ a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 md"""
@@ -460,14 +529,48 @@ let
 	diagram
 end
 
+# ╔═╡ 6ab8e802-d879-4ec0-a86b-ea1797d34c2b
+md"""
+
+As $F' \rightarrow F$, then $p(x) \rightarrow q(x)$, as required.
+
+When $F$ is outside range we need very many samples (very low sample efficiency), so outside that range we need to be careful because the SCABM will turn into a SCAM unless we have very very many sampels.
+
+Vary parameters so $F(\theta)$
+
+Note: different semantics: softly constraining not the same as regression. Show this with Gaussian; for example different errorbars. Interpretation as new ABM. And also, by softly constraining we avoid new hyperparameters -- we constrain hyperparameters "on the fly".
+
+By smoothly varying the soft constraint $F'$, $G(F')$ traces a path known in statistical physics as an *equation of state*.
+
+The resulting $S(C)$ curves are shown below for Erdős–Rényi, Watts-Strogatz and Barabási–Albert networks.
+"""
+
+# ╔═╡ 51cee280-ee61-44af-8615-879750f823b4
+let
+	p = plot(; xlabel = "Clustering coefficient C", ylabel = "Success rate S", legend = false)
+	e = ensemble
+	plotstates!(p, ensemble)
+	p
+end
+
 # ╔═╡ fda9c33b-8657-4d8b-b74e-d0a035dd67eb
 md"""
-## Conclusion
+## Discussion
+
+It should be realized that a difficulty with network science is that many standard network measures are strongly correlated (for example, network assortativity and degree sequence (Peixoto 2020)).
+
+
+One advantage of the SCABM formalism is that the choice and number of statistics -- whether of the "explanatory" $F$ type or "dependant" $G$ type -- is completely free, and multiple statistics
+Another advantage is note that we have more control over the ABM: we do not need to know how to generate networks with a given clustering coefficient $C$, not even on average; but with a SCABM it is still possible to do this automatically.
+In effect this method gives us a new set of "turning knobs" at which we can turn at will and see how the system (ABM) reacts.
+
+This is statistical physics.
 
 Advantages:
 - very simple conceptual framework and computationally efficient; scales in linear time
 - A richer behavior than a straight line, with adaptive error bars (not shown)
-- You can resample from the new scabm and observe the samples
+- you get weighted samples so you can go beyond moments and calculate e.g. weighted quantiles for any statistic. Or probabilistic questions such as "what is the probability that $g/f < 3$"? etc.
+- You can resample from the new scabm and inspect the samples manually to get some intuition
 - multiple constraints can be active at the same time
 
 To do:
@@ -479,6 +582,12 @@ To do:
 
 # ╔═╡ a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
 md"## Appendices"
+
+# ╔═╡ 15a95e15-905f-4996-8000-f4cf3d60aac0
+md"""
+### Derivations
+
+"""
 
 # ╔═╡ 917b1c65-e48f-4e14-aff1-53cef88231a3
 md"""
@@ -551,6 +660,67 @@ let
 	SCABM = staircase_sampling(e, ν)
 	wmean(e.S, e.weight), mean(SCABM.S)
 end
+
+# ╔═╡ d6683d9e-d1c2-44c8-9422-7c9e09d0e558
+md"""
+Calculating sample efficiency with the relative entropy: $\epsilon(\lambda) = e^{-D_\text{KL}(p|q)}$ as "you need $e^{D_\text{KL}(p|q)}$ from $q$ to get one from $p$"
+
+$D_\text{KL}(p|q) = \int dx\ p(x) \log({p(x) \over q(x)})$
+
+$p(x) = q(x) \exp(\lambda f(x)) / Z(\lambda)$
+
+$D_\text{KL}(p|q) = \int dx\ p(x) (\lambda x - \log Z(\lambda)) = \lambda \langle f(x) \rangle_p - \log Z(\lambda)$ where $\langle f(x) \rangle_p = F(\lambda)$
+
+Given that $p(f') = \int dx\ q(x) \delta(f' - f(x))$ is almost a normal PDF $N(f'; \mu,\sigma^2)$ for our hyperparameter settings, then 
+$\log Z(\lambda) \simeq \log \int df \exp(\lambda f) N(f; \mu,\sigma^2) = \lambda \mu + \lambda^2 \sigma^2/2$
+which is nearly linear when $\sigma^2$ is small (as is the case); it acts like a delta function.
+
+So to second order $D_\text{KL}(p|q) = \lambda \langle f(x) \rangle_p - \log Z(\lambda) \approx \lambda(F(\lambda) - F(0)) - \lambda^2 \sigma^2/2$ where $\lambda \sigma \sim O(1)$, so we cannot expect this approximation to hold over a wide range of $\lambda$.
+
+We can see that this approximation breaks down fast, so better to estimate $D_\text{KL}(p|q)$ directly with nested sampling with $\pi(f) = q(f), L(f) = \lambda f$.
+"""
+
+# ╔═╡ ee4c5bca-92e6-4ca5-b957-a11511fa1438
+let
+	extractname(df) = string(first(df.graphtype))
+	atzero(λ, x) = LinearInterpolation(λ, x)(zero(λ))
+	
+	function yticks()
+		ϵ = DataFrame(states).:ϵ
+		scale = sort(unique(round.(Int, log10.(ϵ))))
+		ticks = (10.) .^ scale
+		labels = ["1:$(10^-s)" for s in scale]
+		ticks, labels
+	end
+
+	xlim = 3
+
+	p = plot(;
+		xticks = -10:10, xlim = (-xlim, xlim), yscale = :log,
+		yticks = yticks(), xlabel = "z", ylabel = "Sample efficiency", ylim = (1e-4, 1)
+	)
+	
+	for df in states
+		graphtype = extractname(df)
+		μ = @df df atzero(:λ, :μᶜ)
+		σ = @df df atzero(:λ, :σᶜ)
+		z = @. (df.μᶜ - μ)/σ
+		D = @df df :λ.*(:μᶜ .- μ) - (:λ.*σ).^2/2
+		ϵ = exp.(-D)
+		@df df plot!(p, z, ϵ; label = graphtype, lw = 3)
+	end
+
+	vspan!(p, [-2, 2]; fillalpha = .1, fillcolor = :grey, label = false)
+	
+	p
+end
+
+# ╔═╡ ed907683-f46b-4c6b-9a8a-8263191544d1
+md"""
+The same curves calculated with automatic differentiation in old.jl nested sampling look good, with efficiencies aroud 1:10 for $|z| < 2$. So in general we have a very positive picture (at least for one constraint.)
+Our calculation of $\epsilon$ with the staircase sampling weights depends on the number of posterior samples $M$ (because we are trying to resample $M$ weighted samples), so is a bit sketch.
+The "true" sampling efficiency is somewhere between the theoretic upper bound (i.e. based on $-D_\text{KL}(p|q)$) and this more practical one (i.e. based on staircase resampling).
+"""
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -1943,17 +2113,18 @@ version = "0.9.1+5"
 # ╟─a598718d-b65f-41d3-829f-bbb82888002b
 # ╟─de951afb-2596-4ef6-8c96-c8c03102eea9
 # ╟─c9fda3c0-882c-4f48-a225-f3e67d107f13
-# ╠═6ab8e802-d879-4ec0-a86b-ea1797d34c2b
 # ╟─8d827b33-d299-48fb-b3e6-b31dc26b9fe6
-# ╠═017327e7-7c7d-40b5-8573-ec780f42384b
-# ╟─9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
-# ╠═43b2c09e-2bdf-40f9-8fc2-0cd05b36a445
-# ╠═f8282947-4e2b-40ff-a165-a3fa7e8875eb
+# ╟─b4d0347f-4074-46da-a3d0-3ae9b7045cf8
+# ╟─017327e7-7c7d-40b5-8573-ec780f42384b
+# ╟─f66bed21-ea37-44c1-a238-93bc22778ac3
+# ╟─49458fbd-e8e9-4e67-872f-84abd04c56f2
+# ╟─4efd79a5-3e7a-4b3f-8c11-c61a3c9b0e0b
+# ╠═9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
 # ╟─a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 # ╠═9942dd32-e601-4a01-97ef-e3709080fea8
-# ╠═deb3e957-1eb6-4ec9-be79-4a4c2dc10b39
+# ╟─deb3e957-1eb6-4ec9-be79-4a4c2dc10b39
 # ╟─6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
-# ╟─7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
+# ╠═7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
 # ╠═9b0abb0f-6081-469e-8c3d-69f506cf1caf
 # ╠═9c70b5d1-a6dd-4687-a0d4-6fa2526286ee
 # ╠═5e84cf2f-5ff2-48a9-a4ef-b0f4fddf88cb
@@ -1965,9 +2136,12 @@ version = "0.9.1+5"
 # ╠═08c63f0e-5a64-45e3-97be-c1fa958cc661
 # ╠═c62e44d4-8501-45f6-bdb0-e357e4c363fb
 # ╠═dd40ac6e-d08f-4663-b6c5-9809493e9612
+# ╟─6ab8e802-d879-4ec0-a86b-ea1797d34c2b
+# ╟─51cee280-ee61-44af-8615-879750f823b4
 # ╠═fda9c33b-8657-4d8b-b74e-d0a035dd67eb
 # ╟─a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
-# ╠═917b1c65-e48f-4e14-aff1-53cef88231a3
+# ╠═15a95e15-905f-4996-8000-f4cf3d60aac0
+# ╟─917b1c65-e48f-4e14-aff1-53cef88231a3
 # ╠═f6e4d332-c8b8-425e-a1fe-83378552836c
 # ╠═e8c62155-902b-41f6-bc8d-6f8d74ed352a
 # ╟─dcbfc502-4b53-40e4-b735-9a2aadc96538
@@ -1975,5 +2149,8 @@ version = "0.9.1+5"
 # ╠═0957f4e8-2d3a-4c09-b0bc-453d9c2d005a
 # ╠═c2658679-5a20-446d-90d5-644936323b8f
 # ╠═c6dcddcf-0d12-4e9e-b7fa-f761f5f2cacf
+# ╟─d6683d9e-d1c2-44c8-9422-7c9e09d0e558
+# ╟─ee4c5bca-92e6-4ca5-b957-a11511fa1438
+# ╟─ed907683-f46b-4c6b-9a8a-8263191544d1
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
