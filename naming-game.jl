@@ -5,6 +5,7 @@ using Markdown
 using InteractiveUtils
 
 # ╔═╡ 22c16f23-cb6e-4b15-922b-32c4e4b9baba
+# This notebook was written with `[julia version 1.6.3]`.
 begin
 	using Agents
 	using Graphs
@@ -20,7 +21,14 @@ begin
 	using StatsBase
 	using PlutoUI
 
-	Random.seed!(123)
+	begin # plot settings
+		DPI = 300 # 1200 for poster
+		FONT = "Arial"
+		COLORSCHEME = ColorSchemes.Greys
+		
+		gr(dpi = DPI)
+		default(fontfamily = FONT)
+	end
 
 	TableOfContents()
 end
@@ -30,7 +38,8 @@ let
 	using ShortCodes
 	[
 		DOI("10.1103/PhysRevE.74.036105"),
-		DOI("10.1103/PhysRevE.102.012309")
+		DOI("10.1103/PhysRevE.102.012309"),
+		DOI("10.1109/NSW.2011.6004642")
 	]
 end
 
@@ -64,7 +73,7 @@ begin # ABM parameters
 
 	GRAPHTYPES = [:ErdosRenyi, :WattsStrogatz, :BarabasiAlbert]
 
-	Random.seed!(123)
+	SEED = 123
 end;
 
 # ╔═╡ 6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
@@ -86,6 +95,18 @@ function sample_calibrated_graph(N, graphtype; seed = -1)
 		error("Unknown graphtype: $graphtype")
 	end
 	return g
+end
+
+# ╔═╡ f66bed21-ea37-44c1-a238-93bc22778ac3
+let
+	function example(graphtype; N = 10, size = 500, seed = 1111)
+		g = sample_calibrated_graph(N, graphtype; seed = seed)
+		c = local_clustering_coefficient(g)
+		colors = get.(Ref(COLORSCHEME), c)
+		graphplot(g; title=graphtype, titlefontsize = 10, size = (size, size/2), nodecolor = colors, nodesize = .2)
+	end
+
+	plot(example.([:ErdosRenyi, :WattsStrogatz, :BarabasiAlbert])..., layout = (1,3))
 end
 
 # ╔═╡ 7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
@@ -183,6 +204,8 @@ begin
 		return ensemble
 	end
 
+	Random.seed!(SEED)
+
 	ensemble = vcat(ensemblerun.(N₀, M, T, GRAPHTYPES)...)
 	ensemble = groupby(ensemble, :graphtype)
 end
@@ -206,38 +229,18 @@ begin
 	function project!(ensemble, λ)
 		weigh!(ensemble, λ)
 		@combine ensemble begin
-			λ = λ
-			ϵ = sample_efficiency(:weight)
-			μᶜ = wmean(:C, :weight)
-			σᶜ = wstd(:C, :weight)
-			μˢ = wmean(:S, :weight)
-			σˢ = wstd(:S, :weight)
+			:λ = λ
+			:ϵ = sample_efficiency(:weight)
+			:μᶜ = wmean(:C, :weight)
+			:σᶜ = wstd(:C, :weight)
+			:μˢ = wmean(:S, :weight)
+			:σˢ = wstd(:S, :weight)
+			:μⁿ = wmean(:N, :weight)
+			:σⁿ = wstd(:N, :weight)
 		end
 	end
 
 	project!(ensemble, 0.) # Get unconstrained moments
-end
-
-# ╔═╡ 5e84cf2f-5ff2-48a9-a4ef-b0f4fddf88cb
-begin # Plots
-	DPI = 300 # 1200 for poster
-	FONT = "Arial"
-	COLORSCHEME = ColorSchemes.Greys
-	
-	gr(dpi = DPI)
-	default(fontfamily = FONT)
-end
-
-# ╔═╡ f66bed21-ea37-44c1-a238-93bc22778ac3
-let
-	function example(graphtype; N = 10, size = 500)
-		g = sample_calibrated_graph(N, graphtype; seed = 1111)
-		c = local_clustering_coefficient(g)
-		colors = get.(Ref(COLORSCHEME), c)
-		graphplot(g; title=graphtype, titlefontsize = 10, size = (size, size/2), nodecolor = colors, nodesize = .2)
-	end
-
-	plot(example.([:ErdosRenyi, :WattsStrogatz, :BarabasiAlbert])..., layout = (1,3))
 end
 
 # ╔═╡ e4bc40ca-8958-4807-a240-64fcb1fedcb4
@@ -278,13 +281,13 @@ begin
 			sᵍ = sᵍ[keep, :]
 			@df sᵍ plot!(p, :μᶜ, :μˢ; linewidth=3, linecolor = :black, ylim = (0,1))
 			annotate!(p, μ, 1., text(k.graphtype, FONT, 6))
+
+			###
+			#@df sᵍ plot!(p, :μᶜ, :μⁿ/N₀; linewidth=3, linecolor = :blue, ylim = (0,1))
 		end
 		s
 	end
 end
-
-# ╔═╡ deb3e957-1eb6-4ec9-be79-4a4c2dc10b39
-plotdiagram(ensemble)
 
 # ╔═╡ 8eb2581b-e4de-4fc5-b716-13bf4ff3ffcd
 begin
@@ -326,9 +329,15 @@ let
 	end
 
 	vspan!(p, [-2, 2]; fillalpha = .1, fillcolor = :grey, label = false)
-	
-	p
+
+	plot!(p; title = "Worst case sampling effiency")
 end
+
+# ╔═╡ fb63305f-09d7-4111-8684-4fbab8c192df
+md"""
+!!! warning ""
+    Notebook still under active construction.
+"""
 
 # ╔═╡ 7cd47b87-fceb-4995-970c-ae23e250fb46
 md"""
@@ -428,6 +437,7 @@ The game is played for $T$ timesteps (during one timestep, each agent communicat
 
 As mentioned before, we consider three different network models to capture different types of communication in social networks.
 Each network has $N$ nodes (the number of agents) and is calibrated to the Erdős–Rényi model to have roughly $E \approx N(N-1)/4$ connections.
+These networks are not sparse, since $E \sim O(N^2)$.
 The models are:
 1. [Erdős–Rényi](https://en.wikipedia.org/wiki/Erd%C5%91s%E2%80%93R%C3%A9nyi_model):
      A network where (in this experiment) each possible connection between a pair of agents is present or not with a probability of $p = 0.5$.
@@ -437,7 +447,7 @@ The models are:
 3. [Barabási–Albert](https://en.wikipedia.org/wiki/Barab%C3%A1si%E2%80%93Albert_model):
    A "scale-free" network where a few popular nodes have lots of connections, while the majority has relatively few.
 We will characterize these networks by a single statistic: the **clustering coefficient $C$**.
-More precisely, it is defined as the [mean local clustering coefficient](https://en.wikipedia.org/wiki/Clustering_coefficient):
+More precisely, it is defined as the [average local clustering coefficient](https://en.wikipedia.org/wiki/Clustering_coefficient):
 ````math
 C = {1 \over N} \sum_{n=1}^N C_n
 ````
@@ -460,15 +470,17 @@ md"""
 ### Running the ABM
 """
 
-# ╔═╡ 9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
-md"""
-This notebook was written with `[julia version 1.6.3]`.
-"""
-
 # ╔═╡ a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 md"""
 !!! terminology "Tip"
 	Pluto notebooks are reactive, so you can change the ABM parameters below and execute the cell. The changes will propagate throughout the notebook.
+"""
+
+# ╔═╡ d91ed32c-2092-4aaa-ba50-13d93d0da12b
+md"""
+### Unleashing the SCABMs
+
+We now constrain the expected value (average) of the clustering coefficient $C$ to see how this influences the success rate $S$ at time $T$.
 """
 
 # ╔═╡ 4f4c249a-eaf4-46a9-a5f3-0887715a119c
@@ -534,11 +546,7 @@ md"""
 
 As $F' \rightarrow F$, then $p(x) \rightarrow q(x)$, as required.
 
-When $F$ is outside range we need very many samples (very low sample efficiency), so outside that range we need to be careful because the SCABM will turn into a SCAM unless we have very very many sampels.
-
-Vary parameters so $F(\theta)$
-
-Note: different semantics: softly constraining not the same as regression. Show this with Gaussian; for example different errorbars. Interpretation as new ABM. And also, by softly constraining we avoid new hyperparameters -- we constrain hyperparameters "on the fly".
+When $F$ is outside range we need very many samples (very low sample efficiency), so outside that range we need to be careful because the SCABM will turn into a SCAM unless we have very very many samples.
 
 By smoothly varying the soft constraint $F'$, $G(F')$ traces a path known in statistical physics as an *equation of state*.
 
@@ -547,7 +555,7 @@ The resulting $S(C)$ curves are shown below for Erdős–Rényi, Watts-Strogatz 
 
 # ╔═╡ 51cee280-ee61-44af-8615-879750f823b4
 let
-	p = plot(; xlabel = "Clustering coefficient C", ylabel = "Success rate S", legend = false)
+	p = plot(; xlabel = "Clustering coefficient C", ylabel = "Success rate S", legend = false, title = "Equations of state")
 	e = ensemble
 	plotstates!(p, ensemble)
 	p
@@ -557,24 +565,35 @@ end
 md"""
 ## Discussion
 
+!!! warning
+    Under construction.
+
 It should be realized that a difficulty with network science is that many standard network measures are strongly correlated (for example, network assortativity and degree sequence (Peixoto 2020)).
 
+One advantage of the SCABM formalism is that the choice and number of statistics -- whether of the "explanatory" $F$ type or "dependant" $G$ type -- is completely free, and multiple statistics and constraints are possible.
 
-One advantage of the SCABM formalism is that the choice and number of statistics -- whether of the "explanatory" $F$ type or "dependant" $G$ type -- is completely free, and multiple statistics
 Another advantage is note that we have more control over the ABM: we do not need to know how to generate networks with a given clustering coefficient $C$, not even on average; but with a SCABM it is still possible to do this automatically.
-In effect this method gives us a new set of "turning knobs" at which we can turn at will and see how the system (ABM) reacts.
 
-This is statistical physics.
+!!! note
+    In effect this method gives us a new set of "turning knobs" at which we can turn at will and see how the system (ABM) reacts, *without being able to control them explicitly*.
+	This is good because this widens scope of ABMs considerably.
+    For example #1, neural agents with emergent features -- these emergent features can now be constrained and the effects they have on the system can be studied (as if they were ABM parameters under control of the experimenter).
+	For example #2, generating networks with given (average) clustering coefficient, while possible, is not trivial (e.g. Herrera & Zufiria (2011)). And what if we wanted to constrain another network measure such as [betweenness centrality](https://en.wikipedia.org/wiki/Betweenness_centrality)?
 
-Advantages:
-- very simple conceptual framework and computationally efficient; scales in linear time
-- A richer behavior than a straight line, with adaptive error bars (not shown)
-- you get weighted samples so you can go beyond moments and calculate e.g. weighted quantiles for any statistic. Or probabilistic questions such as "what is the probability that $g/f < 3$"? etc.
-- You can resample from the new scabm and inspect the samples manually to get some intuition
-- multiple constraints can be active at the same time
+!!! terminology "Advantages"
+	- Very simple conceptual framework and computationally efficient; scales in linear time
+	- A richer behavior than a straight line, with adaptive error bars (not shown) -- error bars just show the width of the distribution of the "effect statistic" ($G$), not some kind of regression error!
+	- You get weighted samples so you can go beyond moments and calculate e.g. weighted quantiles for any statistic. Or probabilistic questions such as "what is the probability that $g/f < 3$"? etc.
+	- You can resample from the new SCABM and inspect the samples manually to get some intuition
+	- Multiple constraints can be active at the same time (like temperature and volume with an ideal gas)
+
+!!! warning "Disadvantages/caveats"
+	- Need to be able to sample the ABM many times
+	- Can realistically only constrain within one to max. three sigma $\sigma_F$
+	- **Everything depends on the expressivity of the original ABM!** A SCABM is only as expressive and powerful as the underlying original ABM. If there is no correlation between $F$ and $G$ and the signal is weak, the SCABM will turn into its evil twin SCAM and give you smooth and likeable curves back which are just noise. But this is can be easily detected by just generating another ensemble and seeing whether the $G(F)$ curves are similar. (For example just change the `SEED` variable in this notebook and rerun). Increasing the number of runs `M` diminishes the variability.
 
 To do:
-- Investigate variance of different estimators
+- Investigate variance of different estimators and communicate theoretical results
 - More interesting models
 - Verify predictions from $p(x)$ on unseen data
 - Beyond reweighing and resampling: reconstruct the data with nested sampling in a high-dimensional space ($O(100)$ max)
@@ -587,28 +606,40 @@ md"## Appendices"
 md"""
 ### Derivations
 
+Given the ABM $q(x)$, we want to find a new $p(x)$, the SCABM, under which the expected value (i.e., the average) of $f(x)$ is $F'$, while being as "close" as possible to the prior $q(x)$ as measured by the Kullback-Leibler distance.
+More precisely:
+!!! note "Problem"
+    Given $q(x)$, $f(x)$ and $F'$, find
+    ````math
+    p(x) = \text{argmin}_{p(x)} D_\text{KL}(p|q)
+    ````
+	while satisfying
+    ````math
+	\langle f(x) \rangle_p \equiv \int dx\ p(x) f(x) := F'
+	````
 """
 
 # ╔═╡ 917b1c65-e48f-4e14-aff1-53cef88231a3
 md"""
-### Sensitivity
+### Robustness and sensitivity
 
-The SCABM method has remarkable sensitivity, but still requires a definite
-signal (a definite correlation) to operate on.
-Specifically, if you try to correlate two variables which have no correlation, the method will unfortunately spew out random curves, which vary from SCABM ensemble to SCABM ensemble (and can thus be detected), but which unfortunately will look appealing within a single SCABM ensemble.
-Therefore, it is highly recommended to run and rerun different SCABM ensembles and check whether the obtained $(C, S)$ curves are consistent across ensembles.
-
-Specifically, in our case $(C, S)$, we found it of crucial importance to make the number agents $N$ variable per run, i.e. we sample it as $N' \sim \text{Poisson(N)}$, so $N' = N \pm \sqrt{N}$.
-This is because we calibrate $E \simeq E_\text{ER} = N(N-1)/4$ for each of the network types; i.e., the number of edges $E$ is about the same as the expected number of edges $E_\text{ER}$ of an Erdos-Renyi (ER) network with $N$ nodes.
-Thus, varying $N$ directly varies $E$, which has a strong life-giving effect on $C$ and $S$.
-We found that with constant $N$, the signal $(C, S)$ was not strong enough, and the SCABM method gave essentially random results.
-
-With the Poisson sampling in place, the SCABM method gave consistent results throughout the following variations:
-- Varying $N \sim O(100)$
+With the Poisson sampling for $N$ in place, the SCABM method gave consistent results throughout the following variations:
+- Varying $N_0 \sim O(100)$
 - Varying $T \sim O(10)$
 - [Clustering statistic](https://en.wikipedia.org/wiki/Clustering_coefficient) used: average local clustering coefficient [used here] or global clustering coeffient
-- Which importance sampling estimator to use: reweighing samples [used here] or adjusting the statistic by $\exp(-\lambda C_i)/Z(\lambda)$
-- Which estimator of $C$ to use: reweighing samples [used here] or using Automatic Differentiation Nested Sampling $\langle C \rangle = -{d \over d\lambda} \log Z(\lambda)$ (Van Soom & de Boer 2022, in preparation)
+- Which importance sampling estimator to use: reweighing samples [used here] or adjusting the statistic by $\exp(\lambda C_i)/Z(\lambda)$
+- Which estimator of $C$ to use: reweighing samples [used here] or using Automatic Differentiation Nested Sampling $\langle C \rangle = {d \over d\lambda} \log Z(\lambda)$ (Van Soom & de Boer 2022, in preparation)
+"""
+
+# ╔═╡ b604cefb-8dc6-46d9-b456-7f19af13f067
+md"""
+### Mediating influence of the number of agents
+
+The two plots below show how $C$ influences $S$: through $N$, the number of agents.
+
+Success rate is **negatively correlated** with $N$ because
+- Although success rate is "corrected for" $N$ (it is divided by $N$ and one model step is a sweep through $N$ agents), it is still plausible that more agents simply need relatively more time to converge
+- And more importantly: since $E = O(N^2)$, the number of agents strongly influence the average node degree, and the more connections an agent has, the slower convergence (because if the number of connections is small, you have faster collapse of lexicon)
 """
 
 # ╔═╡ f6e4d332-c8b8-425e-a1fe-83378552836c
@@ -616,13 +647,55 @@ With the Poisson sampling in place, the SCABM method gave consistent results thr
 		[:N :S]; label = ["Number of agents N", "Success rate S"], group = :graphtype, compact = true, size=(400,300), labelfontsize=8
 	)
 
+# ╔═╡ 31c9068f-90f3-4185-aa4f-17c11563047b
+md"""
+Plot below is a good example of the power of SCABMs: intricate dependence that cannot be expressed with a simple linear regression.
+
+The number of agents $N$ is **correlated** with clustering coefficient $C$:
+- **Erdős–Rényi and Barabási–Albert**: A smaller number of agents $N$ affords for a larger variation in $C$ (because as $N$ increases, clustering of coefficient of network samples converges in the usual $O(N^{-1/2})$ way)
+- **Watts-Strogatz**: the same effect as the previous point happens, but there is a real trend: Watts-Strogatz networks are designed to have high local clustering yet short average shortest path lengths. So the positive correlation with $N$ is essentially by design.
+"""
+
 # ╔═╡ e8c62155-902b-41f6-bc8d-6f8d74ed352a
-@df DataFrame(ensemble) cornerplot(
+let
+	p = @df DataFrame(ensemble) cornerplot(
 		[:C :N]; label = ["Clustering coefficient C", "Number of agents N"], group = :graphtype, compact = true, size=(400,300), labelfontsize=8
 	)
 
+	function plot_nagent_states!(p, ensemble; c = 10, n = 100, z = 3)
+		σᶜ = project!(ensemble, 0.).σᶜ
+		λ = lambdas(minimum(σᶜ); c = c, n = n)
+		s = project_lambdas!(ensemble, λ)
+
+		for (k, sᵍ) in pairs(s)
+			μ, σ = getrange!(ensemble, k.graphtype)
+			keep = @. μ - z*σ < sᵍ.μᶜ < μ + z*σ
+			sᵍ = sᵍ[keep, :]
+
+			Nmax = N₀ + 4*√N₀
+			annotate!(p, μ, Nmax, text(k.graphtype, FONT, 6))
+
+			@df sᵍ plot!(p, :μᶜ, :μⁿ; linewidth=3, linecolor = :blue)
+		end
+		s
+	end
+
+	plot_nagent_states!(p[2], ensemble)
+
+	#plot!(p[1]; title = "The influence of C on S is clearly mediated by N")
+	p
+end
+
 # ╔═╡ dcbfc502-4b53-40e4-b735-9a2aadc96538
 md"### References"
+
+# ╔═╡ 6a05d5cf-a51d-47ba-85e1-14c16b369a19
+md"---"
+
+# ╔═╡ 73f75064-a6d2-4ae8-bcd6-52ec610315ee
+md"""
+#### Resampling into a SCABM
+"""
 
 # ╔═╡ c2658679-5a20-446d-90d5-644936323b8f
 """
@@ -660,6 +733,16 @@ let
 	SCABM = staircase_sampling(e, ν)
 	wmean(e.S, e.weight), mean(SCABM.S)
 end
+
+# ╔═╡ d5409b02-89a5-45e9-bc78-67e566112869
+md"""
+#### Sample efficiency
+!!! warning
+	The below sample efficiency is very pessimistic by one or two orders of magnitude.
+	The theoretical sample effiency (TODO: show here) is much better, maintaining a 1:10 efficiency throughout 2 sigma (please read on -- see below)
+    The real efficiency is somewhere in between and needs more research
+	An approximation is given below for theoretical sample efficiency but it is possible to calculate with (ADNS) Automatic Differentiation Nested Sampling (Van Soom & de Boer, in preparation)
+"""
 
 # ╔═╡ d6683d9e-d1c2-44c8-9422-7c9e09d0e558
 md"""
@@ -712,7 +795,7 @@ let
 
 	vspan!(p, [-2, 2]; fillalpha = .1, fillcolor = :grey, label = false)
 	
-	p
+	plot!(p; title = "Theoretical sampling effiency: approximation")
 end
 
 # ╔═╡ ed907683-f46b-4c6b-9a8a-8263191544d1
@@ -2105,6 +2188,7 @@ version = "0.9.1+5"
 """
 
 # ╔═╡ Cell order:
+# ╟─fb63305f-09d7-4111-8684-4fbab8c192df
 # ╟─7cd47b87-fceb-4995-970c-ae23e250fb46
 # ╟─22c16f23-cb6e-4b15-922b-32c4e4b9baba
 # ╟─8a8a6115-a178-4b97-bc77-371a85288363
@@ -2119,36 +2203,39 @@ version = "0.9.1+5"
 # ╟─f66bed21-ea37-44c1-a238-93bc22778ac3
 # ╟─49458fbd-e8e9-4e67-872f-84abd04c56f2
 # ╟─4efd79a5-3e7a-4b3f-8c11-c61a3c9b0e0b
-# ╠═9ae51be5-6f46-4e25-96f9-b2f6dfe1fb89
 # ╟─a2a71645-aaa3-4462-b6f8-bf8d7d9d2d4a
 # ╠═9942dd32-e601-4a01-97ef-e3709080fea8
-# ╟─deb3e957-1eb6-4ec9-be79-4a4c2dc10b39
-# ╟─6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
+# ╠═6f1ddf1f-262b-4a47-8da8-9bf5bb27622f
 # ╠═7c46a491-bef6-4db1-a0d3-2cc648ce6fe9
 # ╠═9b0abb0f-6081-469e-8c3d-69f506cf1caf
 # ╠═9c70b5d1-a6dd-4687-a0d4-6fa2526286ee
-# ╠═5e84cf2f-5ff2-48a9-a4ef-b0f4fddf88cb
+# ╟─d91ed32c-2092-4aaa-ba50-13d93d0da12b
 # ╠═e4bc40ca-8958-4807-a240-64fcb1fedcb4
-# ╠═8eb2581b-e4de-4fc5-b716-13bf4ff3ffcd
+# ╟─8eb2581b-e4de-4fc5-b716-13bf4ff3ffcd
 # ╠═4f4c249a-eaf4-46a9-a5f3-0887715a119c
 # ╠═23826464-15bd-4b29-8540-32982e07b709
 # ╠═4b7f2306-a4c0-42c7-85c2-ea437bc61e50
 # ╠═08c63f0e-5a64-45e3-97be-c1fa958cc661
 # ╠═c62e44d4-8501-45f6-bdb0-e357e4c363fb
-# ╠═dd40ac6e-d08f-4663-b6c5-9809493e9612
+# ╟─dd40ac6e-d08f-4663-b6c5-9809493e9612
 # ╟─6ab8e802-d879-4ec0-a86b-ea1797d34c2b
 # ╟─51cee280-ee61-44af-8615-879750f823b4
-# ╠═fda9c33b-8657-4d8b-b74e-d0a035dd67eb
+# ╟─fda9c33b-8657-4d8b-b74e-d0a035dd67eb
 # ╟─a0aad24f-1f6b-4f2a-9f54-b61e0609eb76
-# ╠═15a95e15-905f-4996-8000-f4cf3d60aac0
+# ╟─15a95e15-905f-4996-8000-f4cf3d60aac0
 # ╟─917b1c65-e48f-4e14-aff1-53cef88231a3
-# ╠═f6e4d332-c8b8-425e-a1fe-83378552836c
-# ╠═e8c62155-902b-41f6-bc8d-6f8d74ed352a
+# ╟─b604cefb-8dc6-46d9-b456-7f19af13f067
+# ╟─f6e4d332-c8b8-425e-a1fe-83378552836c
+# ╟─31c9068f-90f3-4185-aa4f-17c11563047b
+# ╟─e8c62155-902b-41f6-bc8d-6f8d74ed352a
 # ╟─dcbfc502-4b53-40e4-b735-9a2aadc96538
-# ╠═ff785b01-f0f3-4feb-9fc0-f07a5b86faa5
+# ╟─ff785b01-f0f3-4feb-9fc0-f07a5b86faa5
+# ╟─6a05d5cf-a51d-47ba-85e1-14c16b369a19
+# ╟─73f75064-a6d2-4ae8-bcd6-52ec610315ee
 # ╠═0957f4e8-2d3a-4c09-b0bc-453d9c2d005a
 # ╠═c2658679-5a20-446d-90d5-644936323b8f
-# ╠═c6dcddcf-0d12-4e9e-b7fa-f761f5f2cacf
+# ╟─d5409b02-89a5-45e9-bc78-67e566112869
+# ╟─c6dcddcf-0d12-4e9e-b7fa-f761f5f2cacf
 # ╟─d6683d9e-d1c2-44c8-9422-7c9e09d0e558
 # ╟─ee4c5bca-92e6-4ca5-b957-a11511fa1438
 # ╟─ed907683-f46b-4c6b-9a8a-8263191544d1
